@@ -1,0 +1,6 @@
+{
+  "name": "ShadowScan - Logiciel de Test et Sécurité Web",
+  "description": "Application desktop de security assessment pour l'analyse passive et les tests actifs autorisés de sécurité web.",
+  "requestFramePermissions": [],
+  "majorCapabilities": ["MAJOR_CAPABILITY_SERVER_SIDE_GEMINI_API"]
+}
