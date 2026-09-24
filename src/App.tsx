@@ -13,6 +13,7 @@ import { Footer } from './components/common/Footer';
 import { ActiveTestAuthModal } from './components/common/ActiveTestAuthModal';
 import { SettingsModal } from './components/common/SettingsModal';
 import { DocsModal } from './components/common/DocsModal';
+import { DesktopPackagingModal } from './components/common/DesktopPackagingModal';
 import { ScannerReconView } from './components/views/ScannerReconView';
 import { AnalyseWebView } from './components/views/AnalyseWebView';
 import { ActiveTestsView } from './components/views/ActiveTestsView';
@@ -47,6 +48,7 @@ export default function App() {
   const [isAuthModalOpen, setIsAuthModalOpen] = useState<boolean>(false);
   const [isSettingsModalOpen, setIsSettingsModalOpen] = useState<boolean>(false);
   const [isDocsModalOpen, setIsDocsModalOpen] = useState<boolean>(false);
+  const [isPackagingModalOpen, setIsPackagingModalOpen] = useState<boolean>(false);
 
   // Load real historical targets and findings from SQLite on mount
   React.useEffect(() => {
@@ -230,6 +232,7 @@ export default function App() {
         isAnalyzing={isAnalyzing}
         isTesting={isTesting}
         onOpenSettings={() => setIsSettingsModalOpen(true)}
+        onOpenPackaging={() => setIsPackagingModalOpen(true)}
       />
 
       {/* Main Workspace Frame */}
@@ -240,6 +243,7 @@ export default function App() {
           onSelectView={setCurrentView}
           onOpenSettings={() => setIsSettingsModalOpen(true)}
           onOpenDocs={() => setIsDocsModalOpen(true)}
+          onOpenPackaging={() => setIsPackagingModalOpen(true)}
           findingsCount={findings.length}
         />
 
@@ -335,6 +339,12 @@ export default function App() {
       <DocsModal
         isOpen={isDocsModalOpen}
         onClose={() => setIsDocsModalOpen(false)}
+      />
+
+      {/* Desktop Packaging & .EXE Installer Modal */}
+      <DesktopPackagingModal
+        isOpen={isPackagingModalOpen}
+        onClose={() => setIsPackagingModalOpen(false)}
       />
     </div>
   );

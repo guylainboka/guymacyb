@@ -16,7 +16,7 @@ export const DocsModal: React.FC<DocsModalProps> = ({ isOpen, onClose }) => {
           <div className="flex items-center gap-2 text-[#4cd7f6]">
             <span className="material-symbols-outlined text-[20px]">menu_book</span>
             <span className="font-mono text-xs font-bold uppercase tracking-wider">
-              SHADOWSCAN — CAHIER DES CHARGES & DOCTRINE DE SÉCURITÉ
+              GUYMA CYB — CAHIER DES CHARGES & DOCTRINE DE SÉCURITÉ
             </span>
           </div>
           <button onClick={onClose} className="text-[#8c909f] hover:text-white" type="button">

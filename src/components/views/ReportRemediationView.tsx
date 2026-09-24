@@ -15,7 +15,7 @@ export const ReportRemediationView: React.FC<ReportRemediationViewProps> = ({
   const handleCopyJson = () => {
     const reportData = {
       reportId: 'REP-20240524-EXM',
-      auditEngine: 'ShadowScan v1.0.0',
+      auditEngine: 'Guyma Cyb v1.0.0',
       target: targetConfig.url,
       timestamp: new Date().toISOString(),
       operator: targetConfig.operatorId,
@@ -62,7 +62,7 @@ export const ReportRemediationView: React.FC<ReportRemediationViewProps> = ({
             </div>
             <p className="text-xs text-[#8c909f] mt-0.5">
               Cible: <strong className="text-[#dfe2f1]">{targetConfig.url}</strong> • Moteur:{' '}
-              <strong className="text-[#dfe2f1]">ShadowScan v1.0.0</strong> • Opérateur:{' '}
+              <strong className="text-[#dfe2f1]">Guyma Cyb v1.0.0</strong> • Opérateur:{' '}
               <span className="text-[#3b82f6]">{targetConfig.operatorId}</span>
             </p>
           </div>
@@ -423,7 +423,7 @@ if ($request_method = TRACE) {
             <div className="bg-[#0a0e18] p-3 rounded border border-[#24314c] text-[11px] text-[#c2c6d6] flex flex-col gap-2">
               <div className="font-bold text-[#4cd7f6]">[SEC-P1] Fix BOLA/IDOR on GET /api/user/:id</div>
               <p>
-                Description: Identified by ShadowScan Engine. User ID 104 can access data of User ID 105.
+                Description: Identified by Guyma Cyb Engine. User ID 104 can access data of User ID 105.
                 <br />
                 CVSS: 8.5 (HIGH) • CWE-639
                 <br />
@@ -435,7 +435,7 @@ if ($request_method = TRACE) {
                 type="button"
                 onClick={() => {
                   navigator.clipboard.writeText(
-                    `[SEC-P1] Fix BOLA/IDOR on GET /api/user/:id\nSeverity: HIGH (CVSS 8.5)\nCWE: CWE-639\nReported by: ShadowScan\nTarget: ${targetConfig.url}`
+                    `[SEC-P1] Fix BOLA/IDOR on GET /api/user/:id\nSeverity: HIGH (CVSS 8.5)\nCWE: CWE-639\nReported by: Guyma Cyb\nTarget: ${targetConfig.url}`
                   );
                   alert('Template de ticket copié dans le presse-papiers.');
                   setShowIssueModal(false);

@@ -6,6 +6,7 @@ interface SidebarProps {
   onSelectView: (view: ModuleView) => void;
   onOpenSettings: () => void;
   onOpenDocs: () => void;
+  onOpenPackaging?: () => void;
   findingsCount: number;
 }
 
@@ -14,6 +15,7 @@ export const Sidebar: React.FC<SidebarProps> = ({
   onSelectView,
   onOpenSettings,
   onOpenDocs,
+  onOpenPackaging,
   findingsCount,
 }) => {
   const navItems: { id: ModuleView; label: string; icon: string; badge?: string }[] = [
@@ -125,6 +127,17 @@ export const Sidebar: React.FC<SidebarProps> = ({
             Docs
           </button>
         </div>
+
+        {onOpenPackaging && (
+          <button
+            onClick={onOpenPackaging}
+            className="w-full mt-1 px-2.5 py-1.5 rounded bg-blue-600/15 hover:bg-blue-600/25 border border-blue-500/30 text-blue-400 hover:text-blue-300 text-xs font-mono font-medium flex items-center justify-center gap-1.5 transition-colors"
+            type="button"
+          >
+            <span className="material-symbols-outlined text-[14px]">desktop_windows</span>
+            <span>Packaging .EXE</span>
+          </button>
+        )}
       </div>
     </aside>
   );

@@ -16,7 +16,7 @@ export const SettingsModal: React.FC<SettingsModalProps> = ({
   const [threads, setThreads] = useState<number>(8);
   const [rateLimit, setRateLimit] = useState<number>(42);
   const [timeoutMs, setTimeoutMs] = useState<number>(5000);
-  const [customHeader, setCustomHeader] = useState<string>('X-Assessment-Agent: ShadowScan/1.0.0');
+  const [customHeader, setCustomHeader] = useState<string>('X-Assessment-Agent: GuymaCyb/1.0.0');
   const [proxyEnabled, setProxyEnabled] = useState<boolean>(false);
   const [proxyUrl, setProxyUrl] = useState<string>('http://127.0.0.1:8080');
 
@@ -30,7 +30,7 @@ export const SettingsModal: React.FC<SettingsModalProps> = ({
           <div className="flex items-center gap-2 text-[#4cd7f6]">
             <span className="material-symbols-outlined text-[20px]">tune</span>
             <span className="font-mono text-xs font-bold uppercase tracking-wider">
-              PARAMÈTRES DU MOTEUR LOCAL SHADOWSCAN
+              PARAMÈTRES DU MOTEUR LOCAL GUYMA CYB
             </span>
           </div>
           <button onClick={onClose} className="text-[#8c909f] hover:text-white" type="button">
@@ -129,15 +129,26 @@ export const SettingsModal: React.FC<SettingsModalProps> = ({
         </div>
 
         {/* Footer */}
-        <div className="bg-[#0a0e18] px-5 py-3 border-t border-[#24314c] flex items-center justify-between">
-          <a
-            href="/api/database/export"
-            download="shadow_core.db"
-            className="flex items-center gap-1.5 text-[#8c909f] hover:text-[#4cd7f6] font-mono text-xs transition-colors"
-          >
-            <span className="material-symbols-outlined text-[15px]">database</span>
-            <span>Télécharger la Base SQLite (shadow_core.db)</span>
-          </a>
+        <div className="bg-[#0a0e18] px-5 py-3 border-t border-[#24314c] flex flex-wrap items-center justify-between gap-2">
+          <div className="flex items-center gap-3">
+            <a
+              href="/api/database/export"
+              download="shadow_core.db"
+              className="flex items-center gap-1.5 text-[#8c909f] hover:text-[#4cd7f6] font-mono text-xs transition-colors"
+            >
+              <span className="material-symbols-outlined text-[15px]">database</span>
+              <span>Base SQLite</span>
+            </a>
+            <span className="text-[#3b4252]">•</span>
+            <a
+              href="/api/desktop/download-installer"
+              download="GuymaCyb-Setup-v1.0.0.exe"
+              className="flex items-center gap-1.5 text-blue-400 hover:text-blue-300 font-mono text-xs transition-colors font-semibold"
+            >
+              <span className="material-symbols-outlined text-[15px]">desktop_windows</span>
+              <span>Télécharger GuymaCyb.exe</span>
+            </a>
+          </div>
           <button
             type="button"
             onClick={onClose}

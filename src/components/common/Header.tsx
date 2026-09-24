@@ -10,6 +10,7 @@ interface HeaderProps {
   isAnalyzing: boolean;
   isTesting: boolean;
   onOpenSettings: () => void;
+  onOpenPackaging?: () => void;
 }
 
 export const Header: React.FC<HeaderProps> = ({
@@ -20,6 +21,7 @@ export const Header: React.FC<HeaderProps> = ({
   isAnalyzing,
   isTesting,
   onOpenSettings,
+  onOpenPackaging,
 }) => {
   const [cpuUsage, setCpuUsage] = useState<number>(12);
   const [ramUsage, setRamUsage] = useState<number>(410);
@@ -70,7 +72,7 @@ export const Header: React.FC<HeaderProps> = ({
         <div className="flex items-center gap-2">
           <ShadowScanLogo size={18} />
           <span className="font-mono text-xs text-[#dfe2f1] font-medium tracking-tight">
-            ShadowScan Desktop v1.0.0 - Enterprise Security Assessment Engine
+            Guyma Cyb Desktop v1.0.0 - Enterprise Security Assessment Engine
           </span>
           <div className="flex items-center gap-1.5 px-2 py-0.5 bg-[#171b26] rounded text-[#c2c6d6] font-mono text-[11px] border border-[#262a35]">
             <span className="inline-block w-1.5 h-1.5 rounded-full bg-[#4cd7f6] animate-pulse"></span>
@@ -103,7 +105,7 @@ export const Header: React.FC<HeaderProps> = ({
             className="h-full w-9 flex items-center justify-center text-[#c2c6d6] hover:bg-[#93000a] hover:text-white transition-colors"
             type="button"
             onClick={() => {
-              if (confirm('Fermer la session active de ShadowScan ?')) {
+              if (confirm('Fermer la session active de Guyma Cyb ?')) {
                 window.location.reload();
               }
             }}
@@ -245,6 +247,18 @@ export const Header: React.FC<HeaderProps> = ({
           </div>
 
           <div className="flex items-center gap-2">
+            {onOpenPackaging && (
+              <button
+                onClick={onOpenPackaging}
+                title="Packaging Installable Windows (.exe) & Distributions"
+                className="flex items-center gap-1.5 px-2.5 py-1 rounded bg-blue-600/20 hover:bg-blue-600/30 text-blue-400 hover:text-blue-300 font-mono text-xs border border-blue-500/40 shadow-sm transition-all"
+                type="button"
+              >
+                <span className="material-symbols-outlined text-[15px]">desktop_windows</span>
+                <span className="font-bold hidden sm:inline">Packaging .EXE</span>
+              </button>
+            )}
+
             <button
               onClick={onOpenSettings}
               title={`Opérateur: ${targetConfig.operatorId} - Ouvrir paramètres`}

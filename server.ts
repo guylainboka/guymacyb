@@ -10,6 +10,7 @@ import {
   runAutomatedReconSuite,
 } from './src/server/securityLab';
 import { LAB_ATTACK_VECTORS } from './src/data/labAttackVectors';
+import { getOrCreateInstallerExeBuffer, getPackagingInfo } from './src/server/packaging';
 
 const PORT = 3000;
 
@@ -250,6 +251,38 @@ async function startServer() {
       res.download(dbPath, 'shadow_core.db');
     } else {
       res.status(404).send('Fichier SQLite non trouvé');
+    }
+  });
+
+  // Desktop Packaging API - Get Packaging Architecture & Specifications
+  app.get('/api/desktop/info', (_req, res) => {
+    res.json(getPackagingInfo());
+  });
+
+  // Desktop Packaging API - Download GuymaCyb-Setup-v1.0.0.exe Windows Installer
+  app.get('/api/desktop/download-installer', (_req, res) => {
+    try {
+      const exeBuffer = getOrCreateInstallerExeBuffer();
+      res.setHeader('Content-Type', 'application/vnd.microsoft.portable-executable');
+      res.setHeader('Content-Disposition', 'attachment; filename="GuymaCyb-Setup-v1.0.0.exe"');
+      res.setHeader('Content-Length', exeBuffer.length);
+      res.send(exeBuffer);
+    } catch (err: any) {
+      console.error('[Guyma Cyb Packaging] Error generating installer:', err);
+      res.status(500).send('Erreur lors de la génération de l\'installateur');
+    }
+  });
+
+  // Desktop Packaging API - Download GuymaCyb-Portable-v1.0.0 Bundle
+  app.get('/api/desktop/download-portable', (_req, res) => {
+    try {
+      const exeBuffer = getOrCreateInstallerExeBuffer();
+      res.setHeader('Content-Type', 'application/zip');
+      res.setHeader('Content-Disposition', 'attachment; filename="GuymaCyb-Portable-v1.0.0.zip"');
+      res.send(exeBuffer);
+    } catch (err: any) {
+      console.error('[Guyma Cyb Packaging] Error generating portable bundle:', err);
+      res.status(500).send('Erreur lors de la génération du bundle');
     }
   });
 
