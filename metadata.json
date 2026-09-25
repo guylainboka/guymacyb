@@ -2,5 +2,5 @@
   "name": "Guyma Cyb - Logiciel de Test et Sécurité Web",
   "description": "Guyma Cyb Desktop : Suite de cybersécurité défensive, cartographie de surface d'attaque, laboratoire de simulation et remédiation technique.",
   "requestFramePermissions": [],
-  "majorCapabilities": ["MAJOR_CAPABILITY_SERVER_SIDE_GEMINI_API"]
+  "majorCapabilities": []
 }
