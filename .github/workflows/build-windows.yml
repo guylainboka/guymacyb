@@ -1,0 +1,183 @@
+# =============================================================================
+#  Guyma Cyb — Build Windows .exe (GitHub Actions)
+#  --------------------------------------------------------------------------
+#  Construit automatiquement GuymaCyb-Setup-v1.0.0.exe sur Windows à chaque
+#  push sur main, sur un tag v*, ou via déclenchement manuel.
+#
+#  L'installateur final est uploadé comme artifact téléchargeable.
+#  Sur les tags v*, une release GitHub est aussi créée avec le .exe attaché.
+# =============================================================================
+name: Build Windows .exe
+
+on:
+  push:
+    branches: [main]
+    tags: ['v*']
+  pull_request:
+    branches: [main]
+  workflow_dispatch:        # déclenchement manuel depuis l'onglet Actions
+
+permissions:
+  contents: write            # pour créer les releases GitHub sur les tags
+
+jobs:
+  build-windows:
+    name: Build GuymaCyb-Setup.exe (Windows x64)
+    runs-on: windows-latest
+
+    steps:
+      # ----------------------------------------------------------------------
+      # 1. Checkout
+      # ----------------------------------------------------------------------
+      - name: 📥 Checkout code
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      # ----------------------------------------------------------------------
+      # 2. Node.js + Bun
+      # ----------------------------------------------------------------------
+      - name: 🟢 Setup Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: '20'
+          cache: 'npm'
+
+      - name: 🥟 Setup Bun
+        uses: oven-sh/setup-bun@v2
+        with:
+          bun-version: latest
+
+      # ----------------------------------------------------------------------
+      # 3. Rust (noyau shadowscan-core, target windows-gnu)
+      # ----------------------------------------------------------------------
+      - name: 🦀 Setup Rust
+        uses: dtolnay/rust-toolchain@stable
+        with:
+          targets: x86_64-pc-windows-gnu
+
+      - name: 💾 Cache Rust build
+        uses: Swatinem/rust-cache@v2
+        with:
+          workspaces: shadowscan-core
+
+      - name: 🔨 Build Rust core (shadowscan-core.exe)
+        shell: bash
+        run: |
+          cd shadowscan-core
+          cargo build --release --target x86_64-pc-windows-gnu
+          ls -la target/x86_64-pc-windows-gnu/release/shadowscan-core.exe
+
+      # ----------------------------------------------------------------------
+      # 4. Install JS dependencies
+      # ----------------------------------------------------------------------
+      - name: 📦 Install dependencies
+        run: bun install || npm install
+
+      # ----------------------------------------------------------------------
+      # 5. Build frontend (Vite → dist/)
+      # ----------------------------------------------------------------------
+      - name: 🎨 Build frontend
+        run: bun run build || npx vite build
+        env:
+          NODE_ENV: production
+
+      # ----------------------------------------------------------------------
+      # 6. Bundle Express backend (esbuild → dist-server/server.cjs)
+      # ----------------------------------------------------------------------
+      - name: 🧵 Bundle backend
+        run: node desktop/build-server-bundle.js
+
+      - name: ✅ Verify backend bundle
+        shell: bash
+        run: |
+          ls -la dist-server/
+          test -f dist-server/server.cjs && echo "server.cjs OK"
+          test -f dist-server/sql-wasm.wasm && echo "sql-wasm.wasm OK"
+
+      # ----------------------------------------------------------------------
+      # 7. Stage Rust exe + security scripts pour electron-builder
+      #    electron-builder.yml référence ces chemins dans extraResources.
+      # ----------------------------------------------------------------------
+      - name: 📂 Stage extra resources
+        shell: bash
+        run: |
+          mkdir -p staging
+          cp shadowscan-core/target/x86_64-pc-windows-gnu/release/shadowscan-core.exe staging/
+          cp -r security-scripts staging/
+          echo "Staged files:"
+          ls -la staging/
+
+      # ----------------------------------------------------------------------
+      # 8. Package avec electron-builder (NSIS installer)
+      # ----------------------------------------------------------------------
+      - name: 🪟 Build .exe installer (electron-builder)
+        run: npx electron-builder --win nsis --x64
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          NODE_ENV: production
+          # Désactive le code signing automatique (pas de certificat en CI)
+          CSC_IDENTITY_AUTO_DISCOVERY: 'false'
+
+      # ----------------------------------------------------------------------
+      # 9. Vérifier l'installateur final
+      # ----------------------------------------------------------------------
+      - name: ✅ Verify installer
+        shell: bash
+        run: |
+          ls -la dist_electron/
+          EXE=$(find dist_electron -name "*.exe" -type f | head -1)
+          if [ -z "$EXE" ]; then
+            echo "❌ Aucun .exe trouvé dans dist_electron/"
+            exit 1
+          fi
+          echo "✅ Installateur généré: $EXE"
+          ls -lh "$EXE"
+
+      # ----------------------------------------------------------------------
+      # 10. Upload artifact (téléchargeable depuis l'onglet Actions)
+      # ----------------------------------------------------------------------
+      - name: 📤 Upload installer artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: GuymaCyb-Setup-windows-x64
+          path: dist_electron/*.exe
+          if-no-files-found: error
+          retention-days: 90
+
+      # ----------------------------------------------------------------------
+      # 11. Créer une release GitHub si on est sur un tag v*
+      # ----------------------------------------------------------------------
+      - name: 🏷️ Create GitHub Release
+        if: startsWith(github.ref, 'refs/tags/v')
+        uses: softprops/action-gh-release@v2
+        with:
+          files: dist_electron/*.exe
+          name: Guyma Cyb ${{ github.ref_name }}
+          body: |
+            ## Guyma Cyb ${{ github.ref_name }}
+
+            ### 📥 Téléchargement
+            - **GuymaCyb-Setup-${{ github.ref_name }}.exe** — Installateur Windows 10/11 (x64)
+
+            ### ⚙️ Installation
+            1. Téléchargez `GuymaCyb-Setup-*.exe`
+            2. Double-cliquez pour lancer l'installation
+            3. Suivez l'assistant NSIS (raccourci bureau + menu Démarrer créés automatiquement)
+
+            ### 📋 Prérequis pour fonctionnalités avancées
+            - **Git for Windows** (pour les scripts `.sh` de sécurité) → https://git-scm.com/
+            - **Nmap pour Windows** (optionnel, pour le scan de ports réel) → https://nmap.org/download.html
+            - **WSL** (pour le scan WiFi réel — sinon mode simulation)
+
+            ### ✅ Fonctionne sans installation supplémentaire
+            - Scanner & Recon (noyau Rust)
+            - Analyse Web (noyau Rust)
+            - Lab Attaques Web (10 vecteurs)
+            - Lab Attaques WiFi (8 vecteurs, simulation)
+            - Cours & Notions (14 notions)
+            - Rapport & Remédiation (SQLite local)
+          draft: false
+          prerelease: false
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}

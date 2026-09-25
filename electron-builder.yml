@@ -57,7 +57,9 @@ win:
   # Icon: place a multi-resolution .ico at desktop/assets/icon.ico
   # (256x256, 128x128, 64x64, 48x48, 32x32, 16x16). electron-builder will
   # embed it into the .exe resources.
-  icon: desktop/assets/icon.ico
+  # If the file is missing, electron-builder falls back to its default icon.
+  # To enable a custom icon, uncomment the next line and add the file:
+  # icon: desktop/assets/icon.ico
   # Code signing (optional — provide env vars CSC_LINK and CSC_KEY_PASSWORD
   # to enable Authenticode signing of both GuymaCyb.exe and the installer).
   # signed: true   # uncomment once you have a code-signing certificate
@@ -71,14 +73,15 @@ nsis:
   createStartMenuShortcut: true
   shortcutName: Guyma Cyb
   uninstallDisplayName: Guyma Cyb
-  installerIcon: desktop/assets/icon.ico
-  uninstallerIcon: desktop/assets/icon.ico
-  installerHeaderIcon: desktop/assets/icon.ico
+  # Icons: uncomment after placing desktop/assets/icon.ico
+  # installerIcon: desktop/assets/icon.ico
+  # uninstallerIcon: desktop/assets/icon.ico
+  # installerHeaderIcon: desktop/assets/icon.ico
   # The installer file name is derived from productName + version by default.
   # We override artifactName to match the convention used in the NSIS script.
   artifactName: GuymaCyb-Setup-v${version}.exe
-  # Include a license page (placeholder GPL text):
-  license: desktop/assets/LICENSE.txt
+  # Include a license page (uncomment after placing desktop/assets/LICENSE.txt):
+  # license: desktop/assets/LICENSE.txt
   # Show install/uninstall log in the wizard:
   displayLanguageSelector: true
   installerLanguages: [en_US, fr_FR]
