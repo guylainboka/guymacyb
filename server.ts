@@ -11,6 +11,7 @@ import {
 } from './src/server/securityLab';
 import { LAB_ATTACK_VECTORS } from './src/data/labAttackVectors';
 import { getOrCreateInstallerExeBuffer, getPackagingInfo } from './src/server/packaging';
+import * as tb from './src/server/toolbridge';
 
 const PORT = 3000;
 
@@ -283,6 +284,142 @@ async function startServer() {
     } catch (err: any) {
       console.error('[Guyma Cyb Packaging] Error generating portable bundle:', err);
       res.status(500).send('Erreur lors de la génération du bundle');
+    }
+  });
+
+  // ============================================================
+  //  API Outils de sécurité & réseau (toolbridge → Rust + scripts)
+  // ============================================================
+
+  // Vérifie quels outils sont installés sur le système hôte.
+  app.get('/api/tools/status', async (_req, res) => {
+    try {
+      const status = await tb.checkInstalledTools();
+      res.json(status);
+    } catch (err: any) {
+      res.status(500).json({ error: err.message });
+    }
+  });
+
+  // Audit d'en-têtes HTTP via le noyau Rust.
+  app.post('/api/tools/headers', async (req, res) => {
+    try {
+      const { url } = req.body;
+      if (!url) return res.status(400).json({ error: 'URL requise' });
+      const result = await tb.coreHeaders(url);
+      res.json(result);
+    } catch (err: any) {
+      res.status(500).json({ error: err.message });
+    }
+  });
+
+  // Nmap — scan de ports
+  app.post('/api/tools/nmap', async (req, res) => {
+    try {
+      const { url, ports } = req.body;
+      if (!url) return res.status(400).json({ error: 'URL requise' });
+      res.json(await tb.toolNmap(url, ports));
+    } catch (err: any) {
+      res.status(500).json({ error: err.message });
+    }
+  });
+
+  // Nikto — vulnérabilités serveur web
+  app.post('/api/tools/nikto', async (req, res) => {
+    try {
+      const { url } = req.body;
+      if (!url) return res.status(400).json({ error: 'URL requise' });
+      res.json(await tb.toolNikto(url));
+    } catch (err: any) {
+      res.status(500).json({ error: err.message });
+    }
+  });
+
+  // WhatWeb — empreinte technologies web
+  app.post('/api/tools/whatweb', async (req, res) => {
+    try {
+      const { url } = req.body;
+      if (!url) return res.status(400).json({ error: 'URL requise' });
+      res.json(await tb.toolWhatweb(url));
+    } catch (err: any) {
+      res.status(500).json({ error: err.message });
+    }
+  });
+
+  // Dirbrute — découverte de chemins
+  app.post('/api/tools/dirbrute', async (req, res) => {
+    try {
+      const { url, wordlist } = req.body;
+      if (!url) return res.status(400).json({ error: 'URL requise' });
+      res.json(await tb.toolDirbrute(url, wordlist));
+    } catch (err: any) {
+      res.status(500).json({ error: err.message });
+    }
+  });
+
+  // DNS recon — enregistrements DNS
+  app.post('/api/tools/dnsrecon', async (req, res) => {
+    try {
+      const { url } = req.body;
+      if (!url) return res.status(400).json({ error: 'URL requise' });
+      res.json(await tb.toolDnsrecon(url));
+    } catch (err: any) {
+      res.status(500).json({ error: err.message });
+    }
+  });
+
+  // SSL/TLS audit — certificats + versions TLS
+  app.post('/api/tools/ssl-audit', async (req, res) => {
+    try {
+      const { url, port } = req.body;
+      if (!url) return res.status(400).json({ error: 'URL requise' });
+      res.json(await tb.toolSslAudit(url, port));
+    } catch (err: any) {
+      res.status(500).json({ error: err.message });
+    }
+  });
+
+  // Ping — connectivité ICMP
+  app.post('/api/tools/ping', async (req, res) => {
+    try {
+      const { url, count } = req.body;
+      if (!url) return res.status(400).json({ error: 'URL requise' });
+      res.json(await tb.toolPing(url, count));
+    } catch (err: any) {
+      res.status(500).json({ error: err.message });
+    }
+  });
+
+  // MTR / traceroute — chemin réseau
+  app.post('/api/tools/mtr', async (req, res) => {
+    try {
+      const { url, count } = req.body;
+      if (!url) return res.status(400).json({ error: 'URL requise' });
+      res.json(await tb.toolMtr(url, count));
+    } catch (err: any) {
+      res.status(500).json({ error: err.message });
+    }
+  });
+
+  // Netcat — sonde TCP
+  app.post('/api/tools/netcat', async (req, res) => {
+    try {
+      const { url, port, data } = req.body;
+      if (!url) return res.status(400).json({ error: 'URL requise' });
+      res.json(await tb.toolNetcat(url, port, data));
+    } catch (err: any) {
+      res.status(500).json({ error: err.message });
+    }
+  });
+
+  // iperf3 — mesure de bande passante (client)
+  app.post('/api/tools/iperf3', async (req, res) => {
+    try {
+      const { server, port, udp, time, reverse } = req.body;
+      if (!server) return res.status(400).json({ error: 'server requis' });
+      res.json(await tb.toolIperf3(server, { port, udp, time, reverse }));
+    } catch (err: any) {
+      res.status(500).json({ error: err.message });
     }
   });
 

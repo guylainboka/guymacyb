@@ -1,0 +1,29 @@
+[package]
+name = "shadowscan-core"
+version = "1.0.0"
+edition = "2021"
+description = "ShadowScan security core — pure-Rust HTTP scanner, recon & header audit CLI"
+license = "MIT"
+
+[[bin]]
+name = "shadowscan-core"
+path = "src/main.rs"
+
+[dependencies]
+tokio = { version = "1", features = ["rt-multi-thread", "macros", "net", "time", "io-util"] }
+reqwest = { version = "0.12", default-features = false, features = ["rustls-tls", "json", "charset", "http2"] }
+serde = { version = "1", features = ["derive"] }
+serde_json = "1"
+clap = { version = "4", features = ["derive"] }
+hickory-resolver = { version = "0.24", features = ["tokio-runtime"] }
+anyhow = "1"
+url = "2"
+md-5 = "0.10"
+regex = "1"
+hex = "0.4"
+
+[profile.release]
+opt-level = 3
+lto = "thin"
+codegen-units = 1
+strip = true

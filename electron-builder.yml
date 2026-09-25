@@ -1,0 +1,90 @@
+# =============================================================================
+#  electron-builder configuration for Guyma Cyb
+#  --------------------------------------------------------------------------
+#  Docs: https://www.electron.build/configuration
+#
+#  Usage (from project root):
+#    npx electron-builder --win nsis --x64
+#
+#  Output:
+#    dist_electron/GuymaCyb-Setup-v1.0.0.exe   (NSIS installer)
+#
+#  Place a Windows .ico file at desktop/assets/icon.ico (256x256, multi-res).
+#  Place LICENSE text at desktop/assets/LICENSE.txt for the NSIS license page.
+# =============================================================================
+appId: com.guymacyb.desktop
+productName: Guyma Cyb
+copyright: Copyright (c) 2024 Guyma Cyb Security Systems
+
+# The Electron main process. We use a .cjs extension to be explicit about
+# CommonJS (since package.json has "type": "module").
+main: desktop/electron-main.cjs
+
+directories:
+  output: dist_electron
+  buildResources: desktop/assets
+
+# Files bundled INSIDE the Electron app package (resources/app/).
+# Note: the Rust exe, security scripts, and bundled tools go under `extraResources`
+# below so they live OUTSIDE resources/app/ at resources/ (cleaner separation and
+# accessible via process.resourcesPath in electron-main.cjs).
+files:
+  - dist/**/*
+  - dist-server/**/*
+  - desktop/electron-main.cjs
+  - package.json
+
+# extraResources are copied verbatim under process.resourcesPath at runtime.
+# electron-main.cjs resolves SHADOWSCAN_CORE_PATH and SECURITY_SCRIPTS_DIR from
+# there, and augments PATH so security scripts find bundled nmap/openssl.
+extraResources:
+  - from: shadowscan-core/target/x86_64-pc-windows-gnu/release/shadowscan-core.exe
+    to: shadowscan-core/shadowscan-core.exe
+    filter: ["**/*"]
+  - from: security-scripts
+    to: security-scripts
+    filter: ["**/*.sh", "**/*.py", "**/lib/**/*"]
+  - from: tools
+    to: tools
+    filter: ["**/*"]   # only present if you bundle Windows builds of nmap/openssl/git-bash
+
+# Windows-specific packaging
+win:
+  target:
+    - target: nsis
+      arch:
+        - x64
+  # Icon: place a multi-resolution .ico at desktop/assets/icon.ico
+  # (256x256, 128x128, 64x64, 48x48, 32x32, 16x16). electron-builder will
+  # embed it into the .exe resources.
+  icon: desktop/assets/icon.ico
+  # Code signing (optional — provide env vars CSC_LINK and CSC_KEY_PASSWORD
+  # to enable Authenticode signing of both GuymaCyb.exe and the installer).
+  # signed: true   # uncomment once you have a code-signing certificate
+
+# NSIS installer options
+nsis:
+  oneClick: false                          # show a wizard with install dir + components
+  perMachine: true                         # install for all users (Program Files)
+  allowToChangeInstallationDirectory: true
+  createDesktopShortcut: true
+  createStartMenuShortcut: true
+  shortcutName: Guyma Cyb
+  uninstallDisplayName: Guyma Cyb
+  installerIcon: desktop/assets/icon.ico
+  uninstallerIcon: desktop/assets/icon.ico
+  installerHeaderIcon: desktop/assets/icon.ico
+  # The installer file name is derived from productName + version by default.
+  # We override artifactName to match the convention used in the NSIS script.
+  artifactName: GuymaCyb-Setup-v${version}.exe
+  # Include a license page (placeholder GPL text):
+  license: desktop/assets/LICENSE.txt
+  # Show install/uninstall log in the wizard:
+  displayLanguageSelector: true
+  installerLanguages: [en_US, fr_FR]
+
+# Compression: maximum (LZMA) — the bundled Chromium runtime compresses well.
+compression: maximum
+
+# Misc metadata
+buildVersion: 1.0.0

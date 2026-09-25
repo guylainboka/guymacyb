@@ -1,8 +1,32 @@
+# Dépendances
 node_modules/
 build/
 dist/
 coverage/
 .DS_Store
 *.log
+
+# Env
 .env*
 !.env.example
+
+# Build artifacts
+dist-server/
+shadowscan-core/target/
+shadowscan-core/Cargo.lock
+
+# Base SQLite runtime (régénérée au démarrage)
+shadow_core.db
+shadow_core.db.bak
+*.db-journal
+
+# Outils installés en user-space (clonés via install-scripts, pas dans le repo)
+tools/nikto/
+tools/perl5/
+
+# Screenshots de test
+*.png
+
+# Scripts de lancement temporaires (environnement de dev local)
+dev-keeper.sh
+relance.log
