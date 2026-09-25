@@ -20,6 +20,9 @@ import { ActiveTestsView } from './components/views/ActiveTestsView';
 import { ResultsEvidenceView } from './components/views/ResultsEvidenceView';
 import { ReportRemediationView } from './components/views/ReportRemediationView';
 import { SecurityLabView } from './components/views/SecurityLabView';
+import { WifiReseauView } from './components/views/WifiReseauView';
+import { CoursNotionsView } from './components/views/CoursNotionsView';
+import { LaboratoireWifiView } from './components/views/LaboratoireWifiView';
 import { Finding } from './types';
 
 export default function App() {
@@ -306,6 +309,28 @@ export default function App() {
 
           {currentView === 'rapport-and-remediation' && (
             <ReportRemediationView targetConfig={targetConfig} />
+          )}
+
+          {currentView === 'wifi-and-reseau' && (
+            <WifiReseauView
+              onGoToLab={() => setCurrentView('laboratoire-wifi')}
+              onGoToCours={() => setCurrentView('cours-and-notions')}
+            />
+          )}
+
+          {currentView === 'cours-and-notions' && (
+            <CoursNotionsView
+              onGoToLab={() => setCurrentView('laboratoire-wifi')}
+              onGoToWifi={() => setCurrentView('wifi-and-reseau')}
+            />
+          )}
+
+          {currentView === 'laboratoire-wifi' && (
+            <LaboratoireWifiView
+              onCommitFindingToApp={handleCommitLabFinding}
+              onGoToResults={() => setCurrentView('resultats-and-preuves')}
+              onGoToCours={() => setCurrentView('cours-and-notions')}
+            />
           )}
         </main>
       </div>

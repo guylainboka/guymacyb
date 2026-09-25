@@ -30,3 +30,6 @@ tools/perl5/
 # Scripts de lancement temporaires (environnement de dev local)
 dev-keeper.sh
 relance.log
+
+# Worklog développement local
+/home/z/my-project/worklog.md

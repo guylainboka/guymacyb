@@ -235,6 +235,32 @@ export const toolIperf3 = (
 };
 
 // ============================================================
+//  Scripts WiFi (security-scripts/wifi-*.sh)
+//  — Tous fallback en mode "builtin-simulated" si les outils
+//    (iw, iwlist, aircrack-ng, tshark) ne sont pas disponibles
+//    ou si le mode monitor ne peut être activé.
+// ============================================================
+
+export const toolWifiScan = (iface?: string) =>
+  runScript('wifi-scan.sh', [iface].filter(Boolean) as string[], 30_000);
+
+export const toolWpaAudit = (target: string, iface?: string) =>
+  runScript(
+    'wpa-audit.sh',
+    [target, ...(iface ? [iface] : [])],
+    30_000
+  );
+
+export const toolDeauthDetect = (iface?: string, duration?: number) => {
+  const args: string[] = [];
+  if (iface) args.push(iface);
+  if (duration && Number.isFinite(duration)) args.push(String(Math.max(1, Math.min(600, Math.floor(duration)))));
+  // 60s default + 5s slack in the script — extend our timeout to match.
+  const dur = duration && Number.isFinite(duration) ? Math.max(1, Math.min(600, Math.floor(duration))) : 15;
+  return runScript('deauth-detect.sh', args, (dur + 10) * 1000);
+};
+
+// ============================================================
 //  Installation / vérification des outils
 // ============================================================
 

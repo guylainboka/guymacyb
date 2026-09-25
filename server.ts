@@ -8,8 +8,12 @@ import {
   executeLabSimulation,
   commitFullLabSuiteToReport,
   runAutomatedReconSuite,
+  executeWifiLabSimulation,
+  commitFullWifiLabSuiteToReport,
 } from './src/server/securityLab';
 import { LAB_ATTACK_VECTORS } from './src/data/labAttackVectors';
+import { WIFI_LAB_VECTORS } from './src/data/wifiLabVectors';
+import { COURSE_NOTIONS } from './src/data/courseNotions';
 import { getOrCreateInstallerExeBuffer, getPackagingInfo } from './src/server/packaging';
 import * as tb from './src/server/toolbridge';
 
@@ -421,6 +425,87 @@ async function startServer() {
     } catch (err: any) {
       res.status(500).json({ error: err.message });
     }
+  });
+
+  // ============================================================
+  //  API WiFi & Réseau sans fil (security-scripts/wifi-*.sh)
+  // ============================================================
+
+  // WiFi scan — liste des réseaux à portée
+  app.post('/api/wifi/scan', async (req, res) => {
+    try {
+      const { interface: iface } = req.body || {};
+      res.json(await tb.toolWifiScan(iface));
+    } catch (err: any) {
+      res.status(500).json({ error: err.message });
+    }
+  });
+
+  // WPA audit — audit de sécurité d'un AP spécifique
+  app.post('/api/wifi/wpa-audit', async (req, res) => {
+    try {
+      const { target, interface: iface } = req.body || {};
+      if (!target) return res.status(400).json({ error: 'target (BSSID ou SSID) requis' });
+      res.json(await tb.toolWpaAudit(target, iface));
+    } catch (err: any) {
+      res.status(500).json({ error: err.message });
+    }
+  });
+
+  // Détection de déauthentification (intrusion detection)
+  app.post('/api/wifi/deauth-detect', async (req, res) => {
+    try {
+      const { interface: iface, duration } = req.body || {};
+      res.json(await tb.toolDeauthDetect(iface, duration));
+    } catch (err: any) {
+      res.status(500).json({ error: err.message });
+    }
+  });
+
+  // WiFi Lab — liste de tous les vecteurs d'attaque WiFi
+  app.get('/api/wifi/lab/vectors', (_req, res) => {
+    res.json(WIFI_LAB_VECTORS);
+  });
+
+  // WiFi Lab — simuler un vecteur d'attaque dans le sandbox
+  app.post('/api/wifi/lab/simulate', async (req, res) => {
+    try {
+      const { vectorId, targetMode = 'vulnerable', operatorId = 'SEC-OPS-0982' } = req.body || {};
+      if (!vectorId) return res.status(400).json({ error: 'vectorId requis' });
+      const simulation = await executeWifiLabSimulation(vectorId, targetMode, operatorId);
+      res.json(simulation);
+    } catch (err: any) {
+      console.error('[ShadowScan WiFi Lab] Simulation error:', err);
+      res.status(500).json({ error: err.message || 'Erreur de simulation WiFi' });
+    }
+  });
+
+  // WiFi Lab — générer un rapport WiFi complet et le persister en SQLite
+  app.post('/api/wifi/lab/generate-report', async (req, res) => {
+    try {
+      const { operatorId = 'SEC-OPS-0982' } = req.body || {};
+      const reportResult = await commitFullWifiLabSuiteToReport(operatorId);
+      res.json(reportResult);
+    } catch (err: any) {
+      console.error('[ShadowScan WiFi Lab] Report generation error:', err);
+      res.status(500).json({ error: err.message || 'Erreur de génération du rapport WiFi' });
+    }
+  });
+
+  // ============================================================
+  //  API Cours & Notions (cybersécurité WiFi / réseau / crypto)
+  // ============================================================
+
+  // Liste de toutes les notions
+  app.get('/api/courses/notions', (_req, res) => {
+    res.json(COURSE_NOTIONS);
+  });
+
+  // Récupérer une notion par son id
+  app.get('/api/courses/notions/:id', (req, res) => {
+    const notion = COURSE_NOTIONS.find((n) => n.id === req.params.id);
+    if (!notion) return res.status(404).json({ error: 'Notion introuvable' });
+    res.json(notion);
   });
 
   // Vite integration

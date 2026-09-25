@@ -43,6 +43,24 @@ export const Sidebar: React.FC<SidebarProps> = ({
       badge: 'Cyber Lab',
     },
     {
+      id: 'wifi-and-reseau',
+      label: 'WiFi & Réseau',
+      icon: 'wifi',
+      badge: 'WPA3',
+    },
+    {
+      id: 'laboratoire-wifi',
+      label: 'Lab Attaques WiFi',
+      icon: 'network_wifi',
+      badge: '8 vecteurs',
+    },
+    {
+      id: 'cours-and-notions',
+      label: 'Cours & Notions',
+      icon: 'school',
+      badge: '14',
+    },
+    {
       id: 'resultats-and-preuves',
       label: 'Résultats & Preuves',
       icon: 'fact_check',
