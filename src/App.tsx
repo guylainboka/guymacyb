@@ -23,6 +23,7 @@ import { SecurityLabView } from './components/views/SecurityLabView';
 import { WifiReseauView } from './components/views/WifiReseauView';
 import { CoursNotionsView } from './components/views/CoursNotionsView';
 import { LaboratoireWifiView } from './components/views/LaboratoireWifiView';
+import { TerminalView } from './components/views/TerminalView';
 import { Finding } from './types';
 
 export default function App() {
@@ -331,6 +332,10 @@ export default function App() {
               onGoToResults={() => setCurrentView('resultats-and-preuves')}
               onGoToCours={() => setCurrentView('cours-and-notions')}
             />
+          )}
+
+          {currentView === 'terminal-integre' && (
+            <TerminalView />
           )}
         </main>
       </div>

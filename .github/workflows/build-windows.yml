@@ -40,8 +40,9 @@ jobs:
       - name: 🟢 Setup Node.js
         uses: actions/setup-node@v4
         with:
-          node-version: '20'
-          cache: 'npm'
+          node-version: '22'
+          # Pas de cache npm : on n'a pas de package-lock.json (le projet utilise bun.lock)
+          # et le cache npm échouerait avec "Dependencies lock file is not found".
 
       - name: 🥟 Setup Bun
         uses: oven-sh/setup-bun@v2
@@ -72,7 +73,14 @@ jobs:
       # 4. Install JS dependencies
       # ----------------------------------------------------------------------
       - name: 📦 Install dependencies
-        run: bun install || npm install
+        # On génère d'abord un package-lock.json via npm (requis par electron-builder
+        # et setup-node cache). Bun install peut échouer en CI Windows sur certaines
+        # deps natives ; npm install est plus fiable.
+        run: |
+          bun install || npm install --no-audit --no-fund
+          # Générer un lockfile npm pour electron-builder si absent
+          if [ ! -f package-lock.json ]; then npm install --package-lock-only --no-audit --no-fund || true; fi
+        shell: bash
 
       # ----------------------------------------------------------------------
       # 5. Build frontend (Vite → dist/)

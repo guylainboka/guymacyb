@@ -61,6 +61,12 @@ export const Sidebar: React.FC<SidebarProps> = ({
       badge: '14',
     },
     {
+      id: 'terminal-integre',
+      label: 'Terminal Intégré',
+      icon: 'terminal',
+      badge: 'PS/CMD',
+    },
+    {
       id: 'resultats-and-preuves',
       label: 'Résultats & Preuves',
       icon: 'fact_check',

@@ -7,7 +7,8 @@ export type ModuleView =
   | 'rapport-and-remediation'
   | 'wifi-and-reseau'
   | 'cours-and-notions'
-  | 'laboratoire-wifi';
+  | 'laboratoire-wifi'
+  | 'terminal-integre';
 
 export type Severity = 'CRITICAL' | 'HIGH' | 'MEDIUM' | 'LOW' | 'INFO';
 export type FindingStatus = 'VALIDATED' | 'DETECTED' | 'POTENTIAL';

@@ -260,6 +260,62 @@ export const toolDeauthDetect = (iface?: string, duration?: number) => {
   return runScript('deauth-detect.sh', args, (dur + 10) * 1000);
 };
 
+// —— WiFi avancé (mode monitor, capture handshake, crack, WPS, MAC spoofing)
+
+export const toolWifiMonitorMode = (iface: string) =>
+  runScript('wifi-monitor-mode.sh', [iface], 20_000);
+
+export const toolWifiHandshakeCapture = (
+  bssid: string,
+  channel: number | string,
+  iface: string,
+  duration: number | string
+) =>
+  runScript(
+    'wifi-handshake-capture.sh',
+    [bssid, String(channel), iface, String(duration)],
+    (Number(duration) || 30) * 1000 + 15_000
+  );
+
+export const toolWifiCrackHandshake = (capFile: string, wordlist?: string) =>
+  runScript(
+    'wifi-crack-handshake.sh',
+    [capFile, ...(wordlist ? [wordlist] : [])],
+    300_000
+  );
+
+export const toolWifiWpsAttack = (
+  bssid: string,
+  iface: string,
+  mode: 'pixie' | 'pin' | 'brute',
+  pin?: string
+) =>
+  runScript(
+    'wifi-wps-attack.sh',
+    [bssid, iface, mode, ...(pin ? [pin] : [])],
+    100_000
+  );
+
+export const toolWifiMacChanger = (iface: string, mac?: string) =>
+  runScript(
+    'wifi-mac-changer.sh',
+    [iface, ...(mac ? [mac] : [])],
+    15_000
+  );
+
+// —— Terminal intégré (bash / powershell / cmd / python)
+
+export const toolTerminal = (
+  shell: 'bash' | 'powershell' | 'cmd' | 'python',
+  command: string,
+  cwd?: string
+) =>
+  runScript(
+    'terminal-exec.sh',
+    [shell, command, ...(cwd ? [cwd] : [])],
+    35_000
+  );
+
 // ============================================================
 //  Installation / vérification des outils
 // ============================================================

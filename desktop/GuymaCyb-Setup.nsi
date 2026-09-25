@@ -43,6 +43,7 @@
 !include "FileFunc.nsh"
 !include "LogicLib.nsh"
 !include "x64.nsh"
+!include "nsDialogs.nsh"
 
 ; ----------------------------------------------------------------------------
 ;  Product metadata
@@ -87,6 +88,10 @@ BrandingText "${PRODUCT_NAME} ${PRODUCT_VERSION} — ${PRODUCT_PUBLISHER}"
 !insertmacro MUI_PAGE_COMPONENTS
 !insertmacro MUI_PAGE_DIRECTORY
 !insertmacro MUI_PAGE_INSTFILES
+
+; Custom page: outils externes recommandés (affichée après l'installation)
+Page custom ShowToolsPage LeaveToolsPage
+
 !insertmacro MUI_PAGE_FINISH
 
 ; Uninstaller pages
@@ -194,6 +199,90 @@ SectionEnd
   !insertmacro MUI_DESCRIPTION_TEXT ${SEC_DESKTOP} \
     "Crée un raccourci sur le Bureau."
 !insertmacro MUI_FUNCTION_DESCRIPTION_END
+
+; ============================================================================
+;  Custom page: Outils externes recommandés
+;  ----------------------------------------------------------------------------
+;  Affiche la liste des outils à installer pour profiter de toutes les
+;  fonctionnalités (scan WiFi réel, nmap, aircrack-ng, etc.).
+;  L'utilisateur peut cocher les outils, et un fichier tools-to-install.txt
+;  est écrit dans le dossier d'installation pour que l'app affiche un prompt
+;  "Installer les outils recommandés" au premier lancement.
+; ============================================================================
+Var Dialog
+Var ChkNmap
+Var ChkAircrack
+Var ChkWireshark
+Var ChkOpenSSL
+Var ChkGitBash
+Var ChkWSL
+
+Function ShowToolsPage
+  ; Skip si install silencieux
+  IfSilent skip_tools_page
+
+  nsDialogs::Create 1018
+  Pop $Dialog
+  ${If} $Dialog == error
+    Abort
+  ${EndIf}
+
+  ${NSD_CreateLabel} 0 0 100% 24u "Pour utiliser toutes les fonctionnalités de Guyma Cyb (scan WiFi réel, nmap, aircrack-ng...), installez les outils recommandés ci-dessous. Le logiciel fonctionne en mode simulation sans ces outils.$\r$\nCochez les outils que vous souhaitez installer après la fin de l'installation."
+  Pop $0
+
+  ${NSD_CreateCheckbox} 0 30u 100% 12u "Nmap — scanner de ports & services (https://nmap.org/download.html)"
+  Pop $ChkNmap
+
+  ${NSD_CreateCheckbox} 0 44u 100% 12u "Aircrack-ng — suite WiFi (monitor mode, handshake, WPS) — Linux/WSL requis"
+  Pop $ChkAircrack
+
+  ${NSD_CreateCheckbox} 0 58u 100% 12u "Wireshark / tshark — capture de paquets (https://www.wireshark.org/)"
+  Pop $ChkWireshark
+
+  ${NSD_CreateCheckbox} 0 72u 100% 12u "OpenSSL-Win64 — certificats et TLS (https://slproweb.com/products/Win32OpenSSL.html)"
+  Pop $ChkOpenSSL
+
+  ${NSD_CreateCheckbox} 0 86u 100% 12u "Git for Windows — fournit Git Bash (requis pour les scripts .sh) (https://git-scm.com/)"
+  Pop $ChkGitBash
+  ${NSD_Check} $ChkGitBash  ; coché par défaut
+
+  ${NSD_CreateCheckbox} 0 100u 100% 12u "WSL 2 — pour le scan WiFi réel via Linux (wsl --install)"
+  Pop $ChkWSL
+
+  nsDialogs::Show
+
+  skip_tools_page:
+FunctionEnd
+
+Function LeaveToolsPage
+  ; Écrire la liste des outils sélectionnés dans tools-to-install.txt
+  FileOpen $0 "$INSTDIR\tools-to-install.txt" w
+  ${NSD_GetState} $ChkNmap $1
+  ${If} $1 == 1
+    FileWrite $0 "nmap$\r$\n"
+  ${EndIf}
+  ${NSD_GetState} $ChkAircrack $1
+  ${If} $1 == 1
+    FileWrite $0 "aircrack-ng$\r$\n"
+  ${EndIf}
+  ${NSD_GetState} $ChkWireshark $1
+  ${If} $1 == 1
+    FileWrite $0 "wireshark$\r$\n"
+  ${EndIf}
+  ${NSD_GetState} $ChkOpenSSL $1
+  ${If} $1 == 1
+    FileWrite $0 "openssl$\r$\n"
+  ${EndIf}
+  ${NSD_GetState} $ChkGitBash $1
+  ${If} $1 == 1
+    FileWrite $0 "git-bash$\r$\n"
+  ${EndIf}
+  ${NSD_GetState} $ChkWSL $1
+  ${If} $1 == 1
+    FileWrite $0 "wsl$\r$\n"
+  ${EndIf}
+  FileClose $0
+FunctionEnd
 
 ; ----------------------------------------------------------------------------
 ;  Post-install: write uninstaller + Add/Remove Programs registry

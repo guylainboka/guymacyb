@@ -508,6 +508,79 @@ async function startServer() {
     res.json(notion);
   });
 
+  // ============================================================
+  //  API WiFi avancé (monitor mode, handshake, crack, WPS, MAC)
+  // ============================================================
+
+  // Active le mode monitor sur une interface
+  app.post('/api/wifi/monitor-mode', async (req, res) => {
+    try {
+      const { interface: iface } = req.body;
+      if (!iface) return res.status(400).json({ error: 'interface requise' });
+      res.json(await tb.toolWifiMonitorMode(iface));
+    } catch (err: any) {
+      res.status(500).json({ error: err.message });
+    }
+  });
+
+  // Capture d'un 4-way handshake
+  app.post('/api/wifi/handshake-capture', async (req, res) => {
+    try {
+      const { bssid, channel, interface: iface, duration } = req.body;
+      if (!bssid) return res.status(400).json({ error: 'bssid requis' });
+      res.json(await tb.toolWifiHandshakeCapture(bssid, channel || 6, iface || 'wlan0mon', duration || 30));
+    } catch (err: any) {
+      res.status(500).json({ error: err.message });
+    }
+  });
+
+  // Casser un handshake capturé
+  app.post('/api/wifi/crack-handshake', async (req, res) => {
+    try {
+      const { capFile, wordlist } = req.body;
+      if (!capFile) return res.status(400).json({ error: 'capFile requis' });
+      res.json(await tb.toolWifiCrackHandshake(capFile, wordlist));
+    } catch (err: any) {
+      res.status(500).json({ error: err.message });
+    }
+  });
+
+  // Attaque WPS (Pixie-Dust / PIN / brute)
+  app.post('/api/wifi/wps-attack', async (req, res) => {
+    try {
+      const { bssid, interface: iface, mode, pin } = req.body;
+      if (!bssid) return res.status(400).json({ error: 'bssid requis' });
+      res.json(await tb.toolWifiWpsAttack(bssid, iface || 'wlan0mon', mode || 'pixie', pin));
+    } catch (err: any) {
+      res.status(500).json({ error: err.message });
+    }
+  });
+
+  // Changement d'adresse MAC
+  app.post('/api/wifi/mac-changer', async (req, res) => {
+    try {
+      const { interface: iface, mac } = req.body;
+      if (!iface) return res.status(400).json({ error: 'interface requise' });
+      res.json(await tb.toolWifiMacChanger(iface, mac));
+    } catch (err: any) {
+      res.status(500).json({ error: err.message });
+    }
+  });
+
+  // ============================================================
+  //  API Terminal intégré (bash / powershell / cmd / python)
+  // ============================================================
+
+  app.post('/api/terminal/exec', async (req, res) => {
+    try {
+      const { shell, command, cwd } = req.body;
+      if (!shell || !command) return res.status(400).json({ error: 'shell et command requis' });
+      res.json(await tb.toolTerminal(shell, command, cwd));
+    } catch (err: any) {
+      res.status(500).json({ error: err.message });
+    }
+  });
+
   // Vite integration
   const isProd = process.env.NODE_ENV === 'production';
   if (!isProd) {
