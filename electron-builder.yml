@@ -16,9 +16,8 @@ appId: com.guymacyb.desktop
 productName: Guyma Cyb
 copyright: Copyright (c) 2024 Guyma Cyb Security Systems
 
-# The Electron main process. We use a .cjs extension to be explicit about
-# CommonJS (since package.json has "type": "module").
-main: desktop/electron-main.cjs
+# NOTE: le point d'entrée Electron (main) est défini dans package.json ("main"),
+# pas ici — electron-builder le lit depuis package.json.
 
 directories:
   output: dist_electron
@@ -65,8 +64,9 @@ win:
   signingHashAlgorithms:
     - sha256
   signAndEditExecutable: true
-  # rfc3161TimestampServer pour horodater la signature (validité après expiration cert)
-  rfc3161TimestampServer: http://timestamp.digicert.com
+  # Horodatage RFC 3161 (S majuscule à TimeStamp — attention à la casse)
+  rfc3161TimeStampServer: http://timestamp.digicert.com
+  timeStampServer: http://timestamp.digicert.com
 
 # NSIS installer options
 nsis:

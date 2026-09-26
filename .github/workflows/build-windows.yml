@@ -30,7 +30,7 @@ jobs:
       # 1. Checkout
       # ----------------------------------------------------------------------
       - name: 📥 Checkout code
-        uses: actions/checkout@v4
+        uses: actions/checkout@v5
         with:
           fetch-depth: 0
 
@@ -38,9 +38,9 @@ jobs:
       # 2. Node.js + Bun
       # ----------------------------------------------------------------------
       - name: 🟢 Setup Node.js
-        uses: actions/setup-node@v4
+        uses: actions/setup-node@v5
         with:
-          node-version: '22'
+          node-version: "22"
           # Pas de cache npm : on n'a pas de package-lock.json (le projet utilise bun.lock)
           # et le cache npm échouerait avec "Dependencies lock file is not found".
 

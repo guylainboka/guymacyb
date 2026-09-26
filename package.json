@@ -1,8 +1,12 @@
 {
-  "name": "react-example",
+  "name": "guymacyb",
   "private": true,
-  "version": "0.0.0",
+  "version": "1.0.0",
   "type": "module",
+  "description": "Logiciel Windows de cybersécurité exécutant de vrais outils Linux via WSL (inspiré de StrykerOSS). Scanner réseau, audit web, tests WiFi, arsenal, GeoMac.",
+  "author": "Guyma Cyb Security Systems",
+  "main": "desktop/electron-main.cjs",
+  "license": "UNLICENSED",
   "scripts": {
     "dev": "tsx server.ts 2>&1 | tee dev.log",
     "start": "node server.ts",
