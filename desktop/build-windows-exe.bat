@@ -176,6 +176,22 @@ if /i "%PACKAGER%"=="nsis" (
 echo.
 
 REM --------------------------------------------------------------------------
+REM  Code signing (Authenticode) — si un certificat .pfx est présent
+REM --------------------------------------------------------------------------
+if exist "desktop\signing\guymacyb-code-signing.pfx" (
+    echo.
+    echo ==========================================================
+    echo   CODE SIGNING (Authenticode)
+    echo ==========================================================
+    set CSC_LINK=desktop\signing\guymacyb-code-signing.pfx
+    if "%CSC_KEY_PASSWORD%"=="" set CSC_KEY_PASSWORD=guymacyb
+    if exist "dist_electron\win-unpacked\Guyma Cyb.exe" call desktop\signing\sign-exe.bat
+) else (
+    echo [sign] Pas de certificat .pfx — .exe non signé.
+    echo [sign] Générez-en un avec : node desktop\signing\generate-cert.cjs
+)
+
+REM --------------------------------------------------------------------------
 REM  Success
 REM --------------------------------------------------------------------------
 if exist "dist_electron\GuymaCyb-Setup-v1.0.0.exe" (

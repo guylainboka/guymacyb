@@ -117,14 +117,28 @@ jobs:
           ls -la staging/
 
       # ----------------------------------------------------------------------
-      # 8. Package avec electron-builder (NSIS installer)
+      # 8a. Décoder le certificat de signature (si secret WIN_CERT_PFX défini)
+      #     Stocker le .pfx en base64 dans Settings → Secrets → Actions
+      # ----------------------------------------------------------------------
+      - name: 🔑 Decode signing certificate (si secret défini)
+        if: ${{ secrets.WIN_CERT_PFX != '' }}
+        shell: bash
+        run: |
+          mkdir -p desktop/signing
+          echo "${{ secrets.WIN_CERT_PFX }}" | base64 -d > desktop/signing/ci-cert.pfx
+          echo "Certificat de signature décodé ($(wc -c < desktop/signing/ci-cert.pfx) bytes)"
+
+      # ----------------------------------------------------------------------
+      # 8b. Package avec electron-builder (NSIS installer)
+      #     + signature Authenticode automatique si ci-cert.pfx est présent
       # ----------------------------------------------------------------------
       - name: 🪟 Build .exe installer (electron-builder)
         run: npx electron-builder --win nsis --x64
         env:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
           NODE_ENV: production
-          # Désactive le code signing automatique (pas de certificat en CI)
+          CSC_LINK: ${{ github.workspace }}\desktop\signing\ci-cert.pfx
+          CSC_KEY_PASSWORD: ${{ secrets.WIN_CERT_PASSWORD }}
           CSC_IDENTITY_AUTO_DISCOVERY: 'false'
 
       # ----------------------------------------------------------------------
@@ -170,21 +184,33 @@ jobs:
 
             ### ⚙️ Installation
             1. Téléchargez `GuymaCyb-Setup-*.exe`
-            2. Double-cliquez pour lancer l'installation
-            3. Suivez l'assistant NSIS (raccourci bureau + menu Démarrer créés automatiquement)
+            2. Double-cliquez pour lancer l'installation (NSIS wizard)
+            3. Au premier lancement, l'**assistant de configuration** démarre :
+               - détection + installation de WSL (Windows Subsystem for Linux)
+               - installation des outils Linux (nmap, aircrack-ng, hashcat, searchsploit…)
+               - vérification du noyau (Rust ou fallback Node)
+            4. L'application principale s'ouvre — prête à l'emploi
+
+            ### 🎯 Architecture
+            - Logiciel Windows **natif** (Electron) qui exécute de **vrais outils Linux** via WSL
+            - Inspiré de StrykerOSS (Android + chroot/QEMU) adapté à Windows (WSL)
+            - **Aucune simulation** : outils réels, messages honnêtes si hardware absent
+            - Scans de base (HTTP, ports, DNS, TLS, réseau local) fonctionnent SANS WSL via Node
+
+            ### ✅ Modules (18)
+            - Dashboard, Scanner & Recon, Analyse Web, Réseau Local (mDNS/SSDP/NetBIOS)
+            - Tests Actifs, Lab Attaques Web, Résultats & Preuves
+            - WiFi & Réseau, Handshakes, Lab Attaques WiFi
+            - Arsenal (searchsploit/hashcat), GeoMac, MAC Changer, Terminal (bash/PS/CMD/Python)
+            - Cours & Notions, Rapport & Remédiation, Core Manager (WSL)
 
             ### 📋 Prérequis pour fonctionnalités avancées
-            - **Git for Windows** (pour les scripts `.sh` de sécurité) → https://git-scm.com/
-            - **Nmap pour Windows** (optionnel, pour le scan de ports réel) → https://nmap.org/download.html
-            - **WSL** (pour le scan WiFi réel — sinon mode simulation)
+            - **WSL** (le wizard l'installe en 1 clic — `wsl --install`)
+            - **Clé WiFi USB mode monitor** (AR9271/88XXAU) pour le scan WiFi réel
+            - **WIGLE_API_KEY** (env) pour la géolocalisation MAC réelle
 
-            ### ✅ Fonctionne sans installation supplémentaire
-            - Scanner & Recon (noyau Rust)
-            - Analyse Web (noyau Rust)
-            - Lab Attaques Web (10 vecteurs)
-            - Lab Attaques WiFi (8 vecteurs, simulation)
-            - Cours & Notions (14 notions)
-            - Rapport & Remédiation (SQLite local)
+            ### 🔐 Signature
+            Le .exe est signé Authenticode si le secret `WIN_CERT_PFX` est configuré.
           draft: false
           prerelease: false
         env:

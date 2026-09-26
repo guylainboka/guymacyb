@@ -33,3 +33,19 @@ relance.log
 
 # Worklog développement local
 /home/z/my-project/worklog.md
+
+# Code-signing secrets (NEVER commit)
+desktop/signing/*.key
+desktop/signing/*.pfx
+desktop/signing/*.p12
+!desktop/signing/README.md
+
+# Sandbox artifacts (NEVER commit)
+tool-results/
+agent-ctx/
+dev.log
+shadow_core.db
+
+# Autres artefacts sandbox
+download/
+desktop/signing/*.crt

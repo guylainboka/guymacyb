@@ -3,6 +3,11 @@
 #
 # Usage: ./wifi-crack-handshake.sh <cap_file> [wordlist]
 #
+# Strategy:
+#   1. aircrack-ng + wordlist fournie ou découverte sur /usr/share/wordlists → cassage réel
+#   2. Aucun backend disponible — état honnête (PAS de données simulées) :
+#      cracked:false + mode "aircrack-ng-required" / "cap-file-missing" / "wordlist-missing"
+#
 # Sortie : un objet JSON unique sur stdout.
 set -euo pipefail
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
@@ -13,7 +18,7 @@ CAP="${1:-}"; WL="${2:-}"
 log "wifi-crack" "cap=$CAP wordlist=${WL:-auto}"
 
 python3 - "$CAP" "$WL" <<'PY'
-import json, os, random, subprocess, sys, time
+import json, os, subprocess, sys, time
 from datetime import datetime, timezone
 
 cap, wl = sys.argv[1], sys.argv[2]
@@ -22,39 +27,40 @@ result = {"tool":"wifi-crack-handshake","capFile":cap,"wordlist":wl or "","mode"
           "cracked":False,"password":"","keysTried":0,"durationMs":0,"error":"","scannedAt":now}
 
 has_aircrack = __import__("shutil").which("aircrack-ng") is not None
-has_hashcat = __import__("shutil").which("hashcat") is not None
 
-# Trouver une wordlist
+# Vérifier d'abord que le fichier .cap existe réellement.
+if not os.path.exists(cap):
+    result["mode"] = "cap-file-missing"
+    result["error"] = (f"Fichier de capture introuvable : {cap}. "
+                      "Le cassage hors-ligne nécessite un fichier .cap contenant un vrai 4-way handshake capturé "
+                      "(via wifi-handshake-capture.sh avec airodump-ng en mode monitor). "
+                      "GuymaCyb ne génère jamais de données simulées.")
+    print(json.dumps(result, ensure_ascii=False)); sys.exit(0)
+
+if not has_aircrack:
+    result["mode"] = "aircrack-ng-required"
+    result["error"] = ("Cassage indisponible : aircrack-ng n'est pas installé. "
+                      "Installez via WSL (Windows) : apt install aircrack-ng. "
+                      "Le cassage réel combine aircrack-ng + une capture .cap valide + une wordlist (ex. rockyou.txt). "
+                      "GuymaCyb ne génère jamais de données simulées.")
+    print(json.dumps(result, ensure_ascii=False)); sys.exit(0)
+
+# Trouver une wordlist réelle sur le système (aucune wordlist démo n'est générée).
 if not wl:
-    for cand in ["/usr/share/wordlists/rockyou.txt","/usr/share/wordlists/fasttrack.txt",
-                 "/usr/share/seclists/Passwords/Common-Credentials/10-million-password-list-top-1000.txt",
-                 "/tmp/guymacyb-wordlist.txt"]:
+    for cand in ["/usr/share/wordlists/rockyou.txt",
+                 "/usr/share/wordlists/fasttrack.txt",
+                 "/usr/share/seclists/Passwords/Common-Credentials/10-million-password-list-top-1000.txt"]:
         if os.path.exists(cand):
             wl = cand; break
+result["wordlist"] = wl or ""
 
-# Générer une wordlist démo si rien trouvé
-if not wl and not os.path.exists("/tmp/guymacyb-wordlist.txt"):
-    demo_pwds = ["password","12345678","admin","wifi1234","azertyuiop","motdepasse",
-                 "password1","qwerty123","livebox","bbox","freebox","netgear",
-                 "123456789","azerty123","soleil","doudou","loulou","chocolate",
-                 "iloveyou","football","monkey","dragon","letmein","shadow","sunshine","princess"]
-    with open("/tmp/guymacyb-wordlist.txt","w") as f:
-        f.write("\n".join(demo_pwds))
-    wl = "/tmp/guymacyb-wordlist.txt"
-result["wordlist"] = wl
-
-if not has_aircrack or not os.path.exists(cap):
-    # Simulation
-    result["mode"] = "builtin-simulated"
-    time.sleep(1)
-    if random.random() < 0.4 and os.path.exists(cap):
-        result["cracked"] = True
-        result["password"] = random.choice(["wifi1234","azertyuiop","password","12345678","livebox"])
-        result["keysTried"] = random.randint(800, 9000)
-    else:
-        result["keysTried"] = random.randint(500, 5000)
-    result["durationMs"] = random.randint(2000, 8000)
-    result["note"] = "Simulation — aircrack-ng requis pour cassage réel"
+if not wl or not os.path.exists(wl):
+    result["mode"] = "wordlist-missing"
+    result["error"] = ("Aucune wordlist fournie ou trouvée sur le système. "
+                      "Fournissez une wordlist en 2e argument (ex. /usr/share/wordlists/rockyou.txt), "
+                      "ou installez-en une : apt install wordlists / seclists. "
+                      "Le cassage réel aircrack-ng fait correspondre chaque mot de la wordlist aux EAPOL capturés. "
+                      "GuymaCyb ne génère jamais de données simulées.")
     print(json.dumps(result, ensure_ascii=False)); sys.exit(0)
 
 # Cassage réel avec aircrack-ng

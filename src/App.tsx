@@ -15,6 +15,14 @@ import { SettingsModal } from './components/common/SettingsModal';
 import { DocsModal } from './components/common/DocsModal';
 import { DesktopPackagingModal } from './components/common/DesktopPackagingModal';
 import { ScannerReconView } from './components/views/ScannerReconView';
+import { DashboardView } from './components/views/DashboardView';
+import { ReseauLocalView } from './components/views/ReseauLocalView';
+import { ArsenalView } from './components/views/ArsenalView';
+import { GeoMacView } from './components/views/GeoMacView';
+import { CoreManagerView } from './components/views/CoreManagerView';
+import { HidAttacksView } from './components/views/HidAttacksView';
+import { UsbArsenalView } from './components/views/UsbArsenalView';
+import { CameradarView } from './components/views/CameradarView';
 import { AnalyseWebView } from './components/views/AnalyseWebView';
 import { ActiveTestsView } from './components/views/ActiveTestsView';
 import { ResultsEvidenceView } from './components/views/ResultsEvidenceView';
@@ -27,7 +35,7 @@ import { TerminalView } from './components/views/TerminalView';
 import { Finding } from './types';
 
 export default function App() {
-  const [currentView, setCurrentView] = useState<ModuleView>('scanner-and-recon');
+  const [currentView, setCurrentView] = useState<ModuleView>('dashboard');
   const [targetConfig, setTargetConfig] = useState<TargetConfig>({
     url: 'https://example.com',
     port: 443,
@@ -336,6 +344,42 @@ export default function App() {
 
           {currentView === 'terminal-integre' && (
             <TerminalView />
+          )}
+
+          {currentView === 'dashboard' && (
+            <DashboardView
+              targetConfig={targetConfig}
+              findings={findings}
+              onSelectView={setCurrentView}
+            />
+          )}
+
+          {currentView === 'reseau-local' && (
+            <ReseauLocalView />
+          )}
+
+          {currentView === 'arsenal' && (
+            <ArsenalView />
+          )}
+
+          {currentView === 'geomac' && (
+            <GeoMacView />
+          )}
+
+          {currentView === 'core-manager' && (
+            <CoreManagerView />
+          )}
+
+          {currentView === 'hid-attacks' && (
+            <HidAttacksView />
+          )}
+
+          {currentView === 'usb-arsenal' && (
+            <UsbArsenalView />
+          )}
+
+          {currentView === 'cameradar' && (
+            <CameradarView />
           )}
         </main>
       </div>

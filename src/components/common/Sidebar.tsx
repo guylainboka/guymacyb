@@ -20,6 +20,11 @@ export const Sidebar: React.FC<SidebarProps> = ({
 }) => {
   const navItems: { id: ModuleView; label: string; icon: string; badge?: string }[] = [
     {
+      id: 'dashboard',
+      label: 'Dashboard',
+      icon: 'dashboard',
+    },
+    {
       id: 'scanner-and-recon',
       label: 'Scanner & Recon',
       icon: 'radar',
@@ -41,6 +46,23 @@ export const Sidebar: React.FC<SidebarProps> = ({
       label: 'Laboratoire d\'Attaque',
       icon: 'science',
       badge: 'Cyber Lab',
+    },
+    {
+      id: 'arsenal',
+      label: 'Arsenal',
+      icon: 'inventory_2',
+      badge: 'ExploitDB',
+    },
+    {
+      id: 'geomac',
+      label: 'GeoMac',
+      icon: 'location_on',
+    },
+    {
+      id: 'reseau-local',
+      label: 'Réseau Local',
+      icon: 'lan',
+      badge: 'Rootless',
     },
     {
       id: 'wifi-and-reseau',
@@ -65,6 +87,30 @@ export const Sidebar: React.FC<SidebarProps> = ({
       label: 'Terminal Intégré',
       icon: 'terminal',
       badge: 'PS/CMD',
+    },
+    {
+      id: 'core-manager',
+      label: 'Core Manager',
+      icon: 'memory',
+      badge: 'WSL',
+    },
+    {
+      id: 'hid-attacks',
+      label: 'HID Attacks',
+      icon: 'keyboard',
+      badge: 'Ducky',
+    },
+    {
+      id: 'usb-arsenal',
+      label: 'USB Arsenal',
+      icon: 'usb',
+      badge: 'configfs',
+    },
+    {
+      id: 'cameradar',
+      label: 'Cameradar RTSP',
+      icon: 'videocam',
+      badge: '554',
     },
     {
       id: 'resultats-and-preuves',

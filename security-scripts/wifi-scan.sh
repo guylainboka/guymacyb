@@ -410,8 +410,9 @@ def summarize(nets):
 
 start = time.time()
 
-mode = "builtin-simulated"
+mode = "real"
 networks = []
+error_msg = None
 
 # 1. Try `iw dev <iface> scan`
 iw_path = "/usr/bin/iw"
@@ -453,10 +454,29 @@ if not networks:
         # Fall through to builtin-simulated.
         pass
 
-# 4. Builtin-simulated
+# 4. Aucun hardware/outil — état honnête (PAS de données simulées)
 if not networks:
-    networks = builtin_networks()
-    mode = "builtin-simulated"
+    # Vérifier s'il existe une interface sans-fil réelle
+    has_wifi = False
+    try:
+        import os
+        for dev in os.listdir("/sys/class/net"):
+            if os.path.isdir(f"/sys/class/net/{dev}/wireless"):
+                has_wifi = True
+                break
+    except Exception:
+        pass
+    mode = "hardware-detected-tools-missing" if has_wifi else "no-wireless-hardware"
+    networks = []
+    if has_wifi:
+        error_msg = ("Adaptateur sans-fil détecté mais outils manquants. "
+                     "Installez via WSL (Windows) ou apt (Linux) : iw wireless-tools aircrack-ng. "
+                     "Le scan temps réel nécessite ces outils pour interroger nl80211.")
+    else:
+        error_msg = ("Aucun adaptateur sans-fil détecté sur ce système. "
+                     "Le scan WiFi temps réel nécessite une carte WiFi physique + iw/aircrack-ng. "
+                     "Sur Windows, ces outils tournent via WSL (wsl.exe -d Ubuntu -- airodump-ng). "
+                     "GuymaCyb ne génère JAMAIS de données simulées — branchez une clé WiFi USB compatible mode monitor.")
 
 summary = summarize(networks)
 duration_ms = int((time.time() - start) * 1000)
@@ -471,6 +491,7 @@ out = {
     "weakCount": summary["weakCount"],
     "scannedAt": now_iso(),
     "durationMs": duration_ms,
+    "error": error_msg if not networks else None,
 }
 print(json.dumps(out, ensure_ascii=False))
 PY

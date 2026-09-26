@@ -23,9 +23,9 @@
 // are NOT started separately — they are spawned on demand by the Express server
 // via toolbridge.ts (one process per scan request).
 
-const { app, BrowserWindow, shell, dialog } = require('electron');
+const { app, BrowserWindow, shell, dialog, ipcMain } = require('electron');
 const path = require('path');
-const { spawn } = require('child_process');
+const { spawn, execFile } = require('child_process');
 const http = require('http');
 const fs = require('fs');
 
@@ -294,6 +294,273 @@ function stopBackendServer() {
 }
 
 // ---------------------------------------------------------------------------
+// First-run setup wizard — détection WSL / outils / Rust + installation
+// ---------------------------------------------------------------------------
+
+// Fichier-marqueur : s'il existe, le wizard a déjà été complété (ou sauté).
+const SETUP_DONE_FILE = path.join(app.getPath('userData'), '.guymacyb-setup-done');
+const WSL_DISTRO = process.env.WSL_DISTRO || 'Ubuntu';
+const IS_WIN = process.platform === 'win32';
+
+// Liste des outils Linux que le wizard vérifie / installe.
+// Doit rester en sync avec `TOOLS` dans `desktop/setup-wizard.html`.
+const SETUP_TOOLS = [
+  'nmap', 'nikto', 'whatweb', 'aircrack-ng', 'airodump-ng', 'tshark',
+  'iperf3', 'dnsrecon', 'sslscan', 'sqlmap', 'gobuster', 'hashcat',
+  'searchsploit', 'metasploit-framework', 'reaver', 'macchanger',
+];
+// Paquets apt correspondants (noms parfois différents du binaire).
+const APT_PACKAGES = [
+  'nmap', 'nikto', 'whatweb', 'aircrack-ng', 'tshark', 'iperf3',
+  'dnsrecon', 'sslscan', 'sqlmap', 'gobuster', 'hashcat', 'exploitdb',
+  'reaver', 'macchanger', 'wireless-tools', 'iw',
+];
+
+/** Exécute une commande et renvoie { stdout, stderr, exitCode }. */
+function runCmd(cmd, args, opts = {}) {
+  return new Promise((resolve) => {
+    const child = spawn(cmd, args, {
+      cwd: opts.cwd || process.cwd(),
+      env: { ...process.env, LANG: 'C.UTF-8' },
+      stdio: ['ignore', 'pipe', 'pipe'],
+      windowsHide: true,
+      timeout: opts.timeoutMs || 30_000,
+    });
+    let stdout = '', stderr = '';
+    child.stdout.on('data', (d) => (stdout += d.toString()));
+    child.stderr.on('data', (d) => (stderr += d.toString()));
+    child.on('error', (e) => resolve({ stdout, stderr: stderr + e.message, exitCode: -1 }));
+    child.on('close', (code) => resolve({ stdout, stderr, exitCode: code ?? -1 }));
+  });
+}
+
+/** Détecte si WSL est installé + liste les distros (Windows uniquement). */
+async function detectWsl() {
+  if (!IS_WIN) {
+    return { available: false, reason: 'Mode Linux natif — WSL non requis (outils exécutés directement)' };
+  }
+  // Vérifie la présence de wsl.exe
+  const whichRes = await runCmd('where', ['wsl.exe'], { timeoutMs: 5000 });
+  if (whichRes.exitCode !== 0) {
+    return { available: false, reason: 'wsl.exe introuvable — WSL non installé' };
+  }
+  // Liste les distros installés
+  const listRes = await runCmd('wsl.exe', ['-l', '-v'], { timeoutMs: 8000 });
+  const out = (listRes.stdout + listRes.stderr).replace(/\x1b\[[0-9;]*m/g, '').replace(/\0/g, '');
+  const lines = out.split('\n').map((l) => l.trim()).filter(Boolean);
+  const distros = [];
+  for (const line of lines.slice(1)) {
+    const parts = line.split(/\s+/);
+    if (parts.length >= 3) distros.push({ name: parts[0], state: parts[1], version: parts[2] });
+  }
+  // Teste si le distro par défaut démarre vraiment
+  let defaultDistro = distros[0]?.name || WSL_DISTRO;
+  if (distros.length > 0) {
+    const testRes = await runCmd('wsl.exe', ['-d', defaultDistro, '--', 'echo', 'ok'], { timeoutMs: 10000 });
+    if (testRes.exitCode !== 0 || !testRes.stdout.includes('ok')) {
+      return { available: false, reason: 'WSL installé mais le distro ' + defaultDistro + ' ne démarre pas', distros };
+    }
+  } else {
+    return { available: false, reason: 'WSL installé mais aucun distro — lancez `wsl --install -d Ubuntu`', distros: [] };
+  }
+  return { available: true, distros, defaultDistro };
+}
+
+/** Détecte les outils Linux installés (via WSL sur Windows, direct sur Linux). */
+async function detectTools(wslInfo) {
+  const available = [];
+  const missing = [];
+  // Construit une commande `which tool1 tool2 ...`
+  const whichCmd = SETUP_TOOLS.join(' ');
+  let res;
+  if (IS_WIN && wslInfo.available) {
+    res = await runCmd('wsl.exe', ['-d', wslInfo.defaultDistro, '--', 'bash', '-c', `which ${whichCmd} 2>/dev/null; echo "---EXIT:$?"`], { timeoutMs: 15000 });
+  } else if (!IS_WIN) {
+    res = await runCmd('bash', ['-c', `which ${whichCmd} 2>/dev/null; echo "---EXIT:$?"`], { timeoutMs: 10000 });
+  } else {
+    // Windows sans WSL — aucun outil Linux accessible
+    SETUP_TOOLS.forEach((t) => missing.push(t));
+    return { available, missing };
+  }
+  const out = res.stdout;
+  // `which` imprime le ligne des chemins trouvés, puis on ajoute ---EXIT
+  const lines = out.split('\n').filter((l) => l && !l.startsWith('---'));
+  // `which` peut imprimer plusieurs chemins par ligne ou "which: no xxx in ..."
+  for (const t of SETUP_TOOLS) {
+    const found = lines.some((l) => l.includes('/' + t) || l.endsWith(t));
+    if (found) available.push(t);
+    else missing.push(t);
+  }
+  return { available, missing };
+}
+
+/** Détecte tout pour le wizard (WSL + outils + Rust + node). */
+async function detectAll() {
+  const wsl = await detectWsl();
+  const tools = await detectTools(wsl);
+  const rust = fs.existsSync(RUST_CORE);
+  return {
+    isWindows: IS_WIN,
+    wsl,
+    tools,
+    rust,
+    node: process.versions.node,
+  };
+}
+
+/**
+ * Installe WSL avec élévation UAC (Windows).
+ * Utilise PowerShell Start-Process -Verb RunAs pour élever wsl --install.
+ */
+function installWslElevated(progress) {
+  return new Promise((resolve) => {
+    if (!IS_WIN) {
+      return resolve({ exitCode: 0, output: 'Mode Linux natif — aucune installation WSL requise', rebootRequired: false });
+    }
+    // wsl --install --no-distribution pour éviter le téléchargement long du distro par défaut
+    // (le wizard propose ensuite d'installer les outils). Mais l'activation du kernel WSL
+    // requiert un redémarrage. On lance via PowerShell élevé.
+    const psScript = `Start-Process wsl.exe -ArgumentList '--install','--no-distribution','-d','${WSL_DISTRO}' -Verb RunAs -Wait -PassThru | Select-Object -ExpandProperty ExitCode`;
+    progress('$ wsl --install --no-distribution -d ' + WSL_DISTRO + '  (UAC)');
+    const child = spawn('powershell.exe', ['-NoProfile', '-Command', psScript], {
+      stdio: ['ignore', 'pipe', 'pipe'],
+      windowsHide: true,
+    });
+    let out = '';
+    child.stdout.on('data', (d) => { out += d.toString(); });
+    child.stderr.on('data', (d) => { out += d.toString(); progress(d.toString().trim()); });
+    child.on('close', (code) => {
+      // Vérifie si un redémarrage est nécessaire (WSL2 kernel install requiert reboot)
+      const rebootRequired = /restart|reboot|redémarr/i.test(out);
+      progress(rebootRequired ? '⚠ Redémarrage requis pour activer le kernel WSL.' : '✓ Commande wsl --install terminée.');
+      resolve({ exitCode: code ?? 0, output: out, rebootRequired });
+    });
+    child.on('error', (e) => {
+      progress('✗ ' + e.message);
+      resolve({ exitCode: -1, output: e.message, rebootRequired: false });
+    });
+  });
+}
+
+/**
+ * Installe les outils Linux manquants dans WSL (apt-get).
+ * Utilise `wsl -d <distro> -u root` pour éviter le prompt sudo.
+ */
+function installToolsInWsl(wslInfo, progress) {
+  return new Promise((resolve) => {
+    if (!IS_WIN || !wslInfo.available) {
+      // Sur Linux natif : sudo apt-get (peut prompter)
+      progress('$ sudo apt-get update && apt-get install -y ' + APT_PACKAGES.join(' '));
+      const child = spawn('bash', ['-c', 'sudo apt-get update && sudo apt-get install -y ' + APT_PACKAGES.join(' ') + ' 2>&1'], {
+        stdio: ['ignore', 'pipe', 'pipe'],
+      });
+      let out = '';
+      child.stdout.on('data', (d) => { const s = d.toString(); out += s; progress(s.trim()); });
+      child.stderr.on('data', (d) => { const s = d.toString(); out += s; progress(s.trim()); });
+      child.on('close', (code) => resolve({ exitCode: code ?? 0, output: out }));
+      child.on('error', (e) => resolve({ exitCode: -1, output: e.message }));
+      return;
+    }
+    const distro = wslInfo.defaultDistro;
+    const cmd = `apt-get update -qq 2>&1 && apt-get install -y ${APT_PACKAGES.join(' ')} 2>&1`;
+    progress('$ wsl -d ' + distro + ' -u root -- apt-get install -y ' + APT_PACKAGES.join(' '));
+    const child = spawn('wsl.exe', ['-d', distro, '-u', 'root', '--', 'bash', '-c', cmd], {
+      stdio: ['ignore', 'pipe', 'pipe'],
+      windowsHide: true,
+    });
+    let out = '';
+    child.stdout.on('data', (d) => { const s = d.toString(); out += s; progress(s.trim()); });
+    child.stderr.on('data', (d) => { const s = d.toString(); out += s; progress(s.trim()); });
+    child.on('close', (code) => {
+      progress(code === 0 ? '✓ Installation terminée.' : '⚠ terminé (code ' + code + ')');
+      resolve({ exitCode: code ?? 0, output: out });
+    });
+    child.on('error', (e) => resolve({ exitCode: -1, output: e.message }));
+  });
+}
+
+// ---------------------------------------------------------------------------
+// IPC handlers — le wizard (renderer) appelle ces canaux
+// ---------------------------------------------------------------------------
+
+ipcMain.handle('setup:detect-all', async () => {
+  try { return await detectAll(); } catch (e) { return { error: e.message }; }
+});
+
+ipcMain.handle('setup:install-wsl', async (event) => {
+  const progress = (line) => event.sender.send('setup:progress', line);
+  return await installWslElevated(progress);
+});
+
+ipcMain.handle('setup:install-tools', async (event) => {
+  const progress = (line) => event.sender.send('setup:progress', line);
+  const wsl = await detectWsl();
+  return await installToolsInWsl(wsl, progress);
+});
+
+ipcMain.handle('setup:launch-app', async (event) => {
+  // Marquer le setup comme terminé + lancer l'app principale
+  try {
+    fs.writeFileSync(SETUP_DONE_FILE, JSON.stringify({ completedAt: new Date().toISOString(), skipped: false }));
+  } catch (e) { console.warn('[setup] cannot write flag:', e); }
+  // Fermer la fenêtre wizard
+  const win = BrowserWindow.fromWebContents(event.sender);
+  if (win) win.close();
+  // Démarrer le serveur + ouvrir la fenêtre principale
+  serverProcess = startBackendServer();
+  createWindow();
+  await loadApp();
+  return { ok: true };
+});
+
+ipcMain.handle('setup:skip', async (event) => {
+  try {
+    fs.writeFileSync(SETUP_DONE_FILE, JSON.stringify({ completedAt: new Date().toISOString(), skipped: true }));
+  } catch (e) { /* ignore */ }
+  const win = BrowserWindow.fromWebContents(event.sender);
+  if (win) win.close();
+  serverProcess = startBackendServer();
+  createWindow();
+  await loadApp();
+  return { ok: true };
+});
+
+// ---------------------------------------------------------------------------
+// Wizard window
+// ---------------------------------------------------------------------------
+
+let wizardWindow = null;
+
+function createWizardWindow() {
+  wizardWindow = new BrowserWindow({
+    width: 880,
+    height: 680,
+    minWidth: 720,
+    minHeight: 600,
+    title: `${APP_NAME} — Assistant de configuration`,
+    backgroundColor: '#0a0e18',
+    frame: true,
+    autoHideMenuBar: true,
+    show: true,
+    webPreferences: {
+      nodeIntegration: false,
+      contextIsolation: true,
+      sandbox: false,
+      preload: path.join(__dirname, 'setup-preload.cjs'),
+    },
+  });
+  wizardWindow.loadFile(path.join(__dirname, 'setup-wizard.html'));
+  wizardWindow.on('closed', () => { wizardWindow = null; });
+}
+
+/** Détermine si le wizard doit s'afficher (premier lancement en production). */
+function shouldShowWizard() {
+  if (IS_DEV) return false; // en dev, on skip
+  if (fs.existsSync(SETUP_DONE_FILE)) return false;
+  return true;
+}
+
+// ---------------------------------------------------------------------------
 // Window
 // ---------------------------------------------------------------------------
 
@@ -355,7 +622,16 @@ async function loadApp() {
 // ---------------------------------------------------------------------------
 
 app.whenReady().then(async () => {
-  // Spawn backend first (production), then create window, then wait for server.
+  // Premier lancement (production) : afficher le wizard de configuration.
+  if (shouldShowWizard()) {
+    console.log('[GuymaCyb] Premier lancement — affichage du wizard de configuration.');
+    createWizardWindow();
+    // Le wizard appelle setup:launch-app (ou setup:skip) qui démarre ensuite
+    // le serveur + la fenêtre principale. On ne fait rien d'autre ici.
+    return;
+  }
+
+  // Lancement normal : spawn backend (production), puis fenêtre principale.
   serverProcess = startBackendServer();
 
   createWindow();

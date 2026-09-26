@@ -581,6 +581,178 @@ async function startServer() {
     }
   });
 
+  // ============================================================
+  //  API Modules StrykerOSS — Core Manager, Réseau Local,
+  //  Arsenal, GeoMac, Dashboard stats
+  // ============================================================
+
+  // Core Manager — statut global du noyau (WSL, outils installés/manquants, mémoire)
+  app.get('/api/core/status', async (_req, res) => {
+    try {
+      const status = await tb.getCoreStatus();
+      res.json(status);
+    } catch (err: any) {
+      res.status(500).json({ error: err.message });
+    }
+  });
+
+  // Core Manager — installe les outils Linux manquants (apt) via WSL sur Windows,
+  // direct sur Linux. Peut prendre jusqu'à 3 minutes.
+  app.post('/api/core/install-tools', async (_req, res) => {
+    try {
+      res.json(await tb.installToolsViaApt());
+    } catch (err: any) {
+      res.status(500).json({ error: err.message });
+    }
+  });
+
+  // Réseau Local — découverte rootless (mDNS + SSDP + NetBIOS + rDNS /24 + TCP ports)
+  app.post('/api/localnetwork/scan', async (req, res) => {
+    try {
+      const { interface: _iface } = req.body || {};
+      // L'interface optionnelle n'est pas encore câblée côté script (il auto-détecte).
+      res.json(await tb.toolLocalNetworkScan());
+    } catch (err: any) {
+      res.status(500).json({ error: err.message });
+    }
+  });
+
+  // Arsenal — searchsploit : recherche d'exploits par mot-clé
+  app.post('/api/arsenal/searchsploit', async (req, res) => {
+    try {
+      const { query } = req.body;
+      if (!query) return res.status(400).json({ error: 'query requis' });
+      res.json(await tb.toolSearchsploit(query));
+    } catch (err: any) {
+      res.status(500).json({ error: err.message });
+    }
+  });
+
+  // Arsenal — hashcat : crackage d'un hash (mode -m, wordlist optionnelle)
+  app.post('/api/arsenal/hashcat', async (req, res) => {
+    try {
+      const { hash, mode, wordlist } = req.body;
+      if (!hash) return res.status(400).json({ error: 'hash requis' });
+      res.json(await tb.toolHashcat(hash, mode || '0', wordlist));
+    } catch (err: any) {
+      res.status(500).json({ error: err.message });
+    }
+  });
+
+  // GeoMac — géolocalisation d'une adresse MAC (OUI vendor + WiGLE optionnel)
+  app.post('/api/geomac/locate', async (req, res) => {
+    try {
+      const { mac } = req.body;
+      if (!mac) return res.status(400).json({ error: 'mac requis' });
+      res.json(await tb.toolGeoMac(mac));
+    } catch (err: any) {
+      res.status(500).json({ error: err.message });
+    }
+  });
+
+  // Dashboard — statistiques agrégées depuis SQLite (compteurs + derniers 5)
+  app.get('/api/dashboard/stats', async (_req, res) => {
+    try {
+      const db = await getDatabase();
+      const targetCount = Number(db.exec('SELECT COUNT(*) FROM targets')[0]?.values[0]?.[0] || 0);
+      const scanCount = Number(db.exec('SELECT COUNT(*) FROM scans')[0]?.values[0]?.[0] || 0);
+      const findingsCount = Number(db.exec('SELECT COUNT(*) FROM findings')[0]?.values[0]?.[0] || 0);
+
+      // Findings par sévérité (CRITICAL / HIGH / MEDIUM / LOW / INFO + autres)
+      const sevRes = db.exec("SELECT severity, COUNT(*) FROM findings GROUP BY severity");
+      const bySeverity: Record<string, number> = { CRITICAL: 0, HIGH: 0, MEDIUM: 0, LOW: 0, INFO: 0 };
+      if (sevRes[0]) {
+        for (const row of sevRes[0].values) {
+          const sev = String(row[0] || '').toUpperCase();
+          const count = Number(row[1]) || 0;
+          if (sev in bySeverity) bySeverity[sev] = count;
+          else bySeverity[sev] = (bySeverity[sev] || 0) + count;
+        }
+      }
+
+      // 5 derniers findings
+      const recentFindingsRes = db.exec(
+        `SELECT id, target_url, title, severity, cvss, created_at
+         FROM findings ORDER BY created_at DESC LIMIT 5`
+      );
+      const recentFindings: any[] = [];
+      if (recentFindingsRes[0]) {
+        const cols = recentFindingsRes[0].columns;
+        for (const row of recentFindingsRes[0].values) {
+          const obj: Record<string, any> = {};
+          cols.forEach((c, i) => (obj[c] = row[i]));
+          recentFindings.push(obj);
+        }
+      }
+
+      // 5 dernières targets
+      const recentTargetsRes = db.exec(
+        `SELECT id, url, domain, scope, status, last_scanned_at
+         FROM targets ORDER BY last_scanned_at DESC LIMIT 5`
+      );
+      const recentTargets: any[] = [];
+      if (recentTargetsRes[0]) {
+        const cols = recentTargetsRes[0].columns;
+        for (const row of recentTargetsRes[0].values) {
+          const obj: Record<string, any> = {};
+          cols.forEach((c, i) => (obj[c] = row[i]));
+          recentTargets.push(obj);
+        }
+      }
+
+      res.json({
+        targets: targetCount,
+        scans: scanCount,
+        findings: findingsCount,
+        bySeverity,
+        recentFindings,
+        recentTargets,
+        engine: 'wsl-bridge-real',
+        platform: process.platform,
+      });
+    } catch (err: any) {
+      res.status(500).json({ error: err.message });
+    }
+  });
+
+  // ====================================================================
+  //  API Modules StrykerOSS — Cameradar / HID / USB Arsenal
+  //  (ajoutés par STRYKER-MODULES-2 — endpoints en fin de section, avant
+  //   l'intégration Vite. Aucune altération des routes existantes.)
+  // ====================================================================
+
+  // Cameradar — découverte de caméras RTSP (port 554) + sweep credentials
+  app.post('/api/cameradar/scan', async (req, res) => {
+    try {
+      const { subnet } = req.body || {};
+      res.json(await tb.toolCameradarScan(subnet || undefined));
+    } catch (err: any) {
+      res.status(500).json({ error: err.message });
+    }
+  });
+
+  // HID Attacks — génération d'un payload DuckyScript (type requis)
+  app.post('/api/hid/payload', async (req, res) => {
+    try {
+      const { type } = req.body;
+      if (!type) return res.status(400).json({ error: 'type requis' });
+      res.json(await tb.toolHidPayloads(type));
+    } catch (err: any) {
+      res.status(500).json({ error: err.message });
+    }
+  });
+
+  // USB Arsenal — gestion de gadgets USB (configfs Linux/WSL)
+  app.post('/api/usb-arsenal', async (req, res) => {
+    try {
+      const { action, profile } = req.body || {};
+      if (!action) return res.status(400).json({ error: 'action requis (list|status|apply)' });
+      res.json(await tb.toolUsbArsenal(action, profile || undefined));
+    } catch (err: any) {
+      res.status(500).json({ error: err.message });
+    }
+  });
+
   // Vite integration
   const isProd = process.env.NODE_ENV === 'production';
   if (!isProd) {

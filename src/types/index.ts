@@ -1,4 +1,5 @@
 export type ModuleView =
+  | 'dashboard'
   | 'scanner-and-recon'
   | 'analyse-web'
   | 'tests-actifs-and-attaque'
@@ -8,7 +9,14 @@ export type ModuleView =
   | 'wifi-and-reseau'
   | 'cours-and-notions'
   | 'laboratoire-wifi'
-  | 'terminal-integre';
+  | 'terminal-integre'
+  | 'reseau-local'
+  | 'arsenal'
+  | 'geomac'
+  | 'core-manager'
+  | 'hid-attacks'
+  | 'usb-arsenal'
+  | 'cameradar';
 
 export type Severity = 'CRITICAL' | 'HIGH' | 'MEDIUM' | 'LOW' | 'INFO';
 export type FindingStatus = 'VALIDATED' | 'DETECTED' | 'POTENTIAL';

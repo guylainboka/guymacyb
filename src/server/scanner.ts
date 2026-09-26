@@ -91,22 +91,31 @@ export async function runRealAnalysis(
       ]
     );
 
-    // Insert endpoints.
+    // Insert endpoints. Use INSERT OR REPLACE and prefix the ID with the scanId
+    // so that re-scanning the same target (which yields the same `ep-root`/`ep-0`/
+    // `ep-1` IDs from nodeBuildEndpoints) doesn't trip the UNIQUE constraint on
+    // `endpoints.id`. The scan_id column already disambiguates rows per scan.
     for (const ep of (result.endpoints || []).slice(0, 50)) {
+      const epId = `${scanId}-${ep.id}`;
       db.run(
-        `INSERT INTO endpoints (id, scan_id, path, method, status_code, status_text, type, note, created_at)
+        `INSERT OR REPLACE INTO endpoints (id, scan_id, path, method, status_code, status_text, type, note, created_at)
          VALUES (?, ?, ?, ?, ?, ?, ?, ?, datetime('now'))`,
-        [ep.id, scanId, ep.path, ep.method, ep.status, ep.statusText, ep.type, ep.note || '']
+        [epId, scanId, ep.path, ep.method, ep.status, ep.statusText, ep.type, ep.note || '']
       );
     }
 
-    // Insert findings.
+    // Insert findings. Re-scanning the same target will rediscover the same
+    // missing security headers (e.g. `hdr-strict-transport-security`). To avoid
+    // UNIQUE-constraint failures on `findings.id` we use INSERT OR REPLACE and
+    // prefix the id with the scanId (older duplicate findings for the same target
+    // are effectively superseded by the freshest scan).
     for (const f of result.findings || []) {
+      const fId = `${scanId}-${f.id}`;
       db.run(
-        `INSERT INTO findings (id, scan_id, target_url, title, severity, cvss, confidence, status, affected_component, category, cwe, description, evidence_request, evidence_response, impact, remediation_title, remediation_steps_json, signature, created_at)
+        `INSERT OR REPLACE INTO findings (id, scan_id, target_url, title, severity, cvss, confidence, status, affected_component, category, cwe, description, evidence_request, evidence_response, impact, remediation_title, remediation_steps_json, signature, created_at)
          VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, datetime('now'))`,
         [
-          f.id, scanId, normalized, f.title, f.severity, f.cvss, f.confidence, f.status,
+          fId, scanId, normalized, f.title, f.severity, f.cvss, f.confidence, f.status,
           f.affectedComponent, f.category, f.cwe, f.description,
           f.evidence.request, f.evidence.response, f.impact,
           f.remediationTitle, JSON.stringify(f.remediationSteps), f.signature,

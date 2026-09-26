@@ -7,9 +7,8 @@
 # Strategy (in order, first one that works wins):
 #   1. `airodump-ng` (needs monitor mode + sudo) — captures real deauth frames
 #   2. `tshark` (needs monitor mode + sudo + pcap access)
-#   3. builtin-simulated — generates 0-3 fake deauth events over the duration
-#      to demonstrate the detection mechanism. Clearly labelled
-#      `mode: "builtin-simulated"`.
+#   3. Aucun backend disponible — état honnête (PAS de données simulées) :
+#      mode "monitor-mode-required" + events:[] + totalDeauths:0
 #
 # Detection logic:
 #   - totalDeauths >= 10 in durationSec  → DEAUTH_FLOOD
@@ -49,8 +48,8 @@ fi
 log "deauth-detect" "Interface: $IFACE Duration: ${DURATION}s"
 
 python3 - "$IFACE" "$DURATION" <<'PY'
-import json, os, random, re, subprocess, sys, time
-from datetime import datetime, timezone, timedelta
+import json, os, re, subprocess, sys, time
+from datetime import datetime, timezone
 
 iface = sys.argv[1]
 duration = int(sys.argv[2])
@@ -58,8 +57,15 @@ duration = int(sys.argv[2])
 def now_iso():
     return datetime.now(timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ")
 
-def iso_offset(seconds_from_now):
-    return (datetime.now(timezone.utc) + timedelta(seconds=seconds_from_now)).strftime("%Y-%m-%dT%H:%M:%SZ")
+def has_wireless_hardware():
+    """Return True if a /sys/class/net/*/wireless interface exists."""
+    try:
+        for dev in os.listdir("/sys/class/net"):
+            if os.path.isdir(f"/sys/class/net/{dev}/wireless"):
+                return True
+    except Exception:
+        pass
+    return False
 
 def looks_like_real_iface(name):
     try:
@@ -176,72 +182,6 @@ def try_tshark():
     return events
 
 # ============================================================
-#  Builtin-simulated events (clearly labelled)
-# ============================================================
-def builtin_events(duration_sec):
-    """Generate 0-3 fake deauth events spread across the duration."""
-    # Deterministic count based on duration so reproducible per call signature,
-    # but with some variability.
-    rng = random.Random(int(time.time()))
-    # 0-3 events (sometimes nothing happens, sometimes a flood demonstration).
-    # Heavier weighting on 0-1 events to demonstrate "no attack detected" case.
-    # Occasionally (10% of calls) produce a flood of 12+ events to demonstrate
-    # DEAUTH_FLOOD classification.
-    if rng.random() < 0.10:
-        n = rng.randint(12, 25)
-        flood = True
-    else:
-        n = rng.randint(0, 3)
-        flood = False
-    events = []
-    # Choose a "victim" AP and client (deterministic French-ISP-style BSSIDs).
-    ap_pool = [
-        ("F4:CA:E5:11:22:01", "TP-Link"),
-        ("8C:DC:D4:00:11:02", "Netgear"),
-        ("00:1A:11:33:55:03", "D-Link"),
-    ]
-    client_pool = [
-        "FF:EE:DD:CC:BB:01",
-        "FF:EE:DD:CC:BB:02",
-        "FF:EE:DD:CC:BB:03",
-    ]
-    if flood:
-        # Single AP, single client, 12+ deauths in a short window → DEAUTH_FLOOD
-        ap, _ = rng.choice(ap_pool)
-        client = rng.choice(client_pool)
-        base = time.time()
-        for i in range(n):
-            ts = base + (i * (duration / max(1, n)))
-            events.append({
-                "timestamp": datetime.fromtimestamp(ts, tz=timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ"),
-                "sourceBssid": ap,
-                "targetClient": client,
-                "reason": "Class 3 frame (station leaving)",
-                "frameType": "0x00C0",
-            })
-    else:
-        # 0-3 events, varied APs/clients/reasons
-        reasons = [
-            ("Class 3 frame (station leaving)", "0x00C0"),
-            ("Unspecified", "0x00C0"),
-            ("Disassociated due to inactivity", "0x00A8"),
-        ]
-        base = time.time()
-        for i in range(n):
-            ap, _ = rng.choice(ap_pool)
-            client = rng.choice(client_pool)
-            reason, ftype = rng.choice(reasons)
-            ts = base + (i * (duration / max(1, n + 1)))
-            events.append({
-                "timestamp": datetime.fromtimestamp(ts, tz=timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ"),
-                "sourceBssid": ap,
-                "targetClient": client,
-                "reason": reason,
-                "frameType": ftype,
-            })
-    return events
-
-# ============================================================
 #  Attack classification
 # ============================================================
 def classify_attack(events, duration_sec):
@@ -265,9 +205,10 @@ def classify_attack(events, duration_sec):
     return False, None
 
 start = time.time()
-mode = "builtin-simulated"
+mode = "monitor-mode-required"
 events = []
 monitor_mode = False
+error_msg = None
 
 # 1. Try airodump-ng (sets monitor mode implicitly when run as root)
 airodump_events = try_airodump()
@@ -283,16 +224,34 @@ else:
         mode = "tshark"
         monitor_mode = True
     else:
-        # 3. Builtin-simulated
-        events = builtin_events(duration)
-        mode = "builtin-simulated"
+        # 3. Aucun backend disponible — état honnête (PAS de données simulées).
+        events = []
         monitor_mode = False
+        has_airodump = airodump_present()
+        has_tshark = tshark_present()
+        has_wifi = has_wireless_hardware()
+        if not has_airodump and not has_tshark:
+            mode = "tools-not-installed"
+            error_msg = ("Détection de deauth indisponible : airodump-ng et tshark ne sont pas installés. "
+                         "Installez via WSL (Windows) : apt install aircrack-ng tshark. "
+                         "Ces outils analysent les trames 802.11 deauth/disassociation sur une interface en mode monitor. "
+                         "GuymaCyb ne génère jamais de données simulées.")
+        elif not has_wifi:
+            mode = "no-wireless-hardware"
+            error_msg = ("Aucun adaptateur sans-fil détecté sur ce système. "
+                         "La détection de deauth nécessite une clé WiFi physique en mode monitor + airodump-ng/tshark (root). "
+                         "Sur Windows, ces outils tournent via WSL (wsl.exe -d Ubuntu -- airmon-ng start wlan0). "
+                         "GuymaCyb ne génère jamais de données simulées.")
+        else:
+            mode = "monitor-mode-required"
+            error_msg = ("Aucune interface en mode monitor détectée. "
+                         "Activez le mode monitor en root : airmon-ng start wlan0, puis relancez ce script sur l'interface générée (ex. wlan0mon). "
+                         "Sans mode monitor, ni airodump-ng ni tshark ne peuvent capturer les trames deauth 802.11. "
+                         "GuymaCyb ne génère jamais de données simulées.")
 
-# Sleep for the remaining duration so the durationSec field is accurate when
-# we're in builtin-simulated mode (otherwise the script returns instantly).
-elapsed = time.time() - start
-if elapsed < duration and mode == "builtin-simulated":
-    time.sleep(max(0, duration - elapsed))
+# No fake sleep — only sleep when real capture tools were running. The real
+# airodump-ng/tshark captures already take `duration` seconds; in the honest
+# fallback we return immediately so the user knows the truth without delay.
 
 suspected, attack_type = classify_attack(events, duration)
 
@@ -308,5 +267,7 @@ out = {
     "attackType": attack_type,
     "scannedAt": now_iso(),
 }
+if error_msg:
+    out["error"] = error_msg
 print(json.dumps(out, ensure_ascii=False))
 PY

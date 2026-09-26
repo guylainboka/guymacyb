@@ -1,0 +1,39 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="256" height="256" viewBox="0 0 256 256">
+  <defs>
+    <linearGradient id="bg" x1="0" y1="0" x2="0" y2="1">
+      <stop offset="0" stop-color="#0f1626"/>
+      <stop offset="1" stop-color="#0a0e18"/>
+    </linearGradient>
+    <linearGradient id="shield" x1="0" y1="0" x2="0" y2="1">
+      <stop offset="0" stop-color="#4cd7f6"/>
+      <stop offset="0.6" stop-color="#4d8eff"/>
+      <stop offset="1" stop-color="#2a6dd6"/>
+    </linearGradient>
+    <linearGradient id="inner" x1="0" y1="0" x2="0" y2="1">
+      <stop offset="0" stop-color="#0a0e18"/>
+      <stop offset="1" stop-color="#171b26"/>
+    </linearGradient>
+  </defs>
+  <rect width="256" height="256" rx="48" fill="url(#bg)"/>
+  <!-- subtle grid -->
+  <g stroke="#4d8eff" stroke-opacity="0.06" stroke-width="1">
+    <line x1="0" y1="64" x2="256" y2="64"/>
+    <line x1="0" y1="128" x2="256" y2="128"/>
+    <line x1="0" y1="192" x2="256" y2="192"/>
+    <line x1="64" y1="0" x2="64" y2="256"/>
+    <line x1="128" y1="0" x2="128" y2="256"/>
+    <line x1="192" y1="0" x2="192" y2="256"/>
+  </g>
+  <!-- shield -->
+  <path d="M128 28 L208 56 L208 132 C208 180 172 214 128 230 C84 214 48 180 48 132 L48 56 Z"
+        fill="url(#shield)" stroke="#4cd7f6" stroke-width="2"/>
+  <path d="M128 44 L192 66 L192 132 C192 172 162 200 128 214 C94 200 64 172 64 132 L64 66 Z"
+        fill="url(#inner)" stroke="#4cd7f6" stroke-opacity="0.35" stroke-width="1"/>
+  <!-- terminal prompt + scanline motif -->
+  <g font-family="JetBrains Mono, Consolas, monospace" font-weight="700">
+    <text x="86" y="140" font-size="40" fill="#4cd7f6">&gt;_</text>
+    <text x="86" y="172" font-size="20" fill="#10b981" letter-spacing="2">CYB</text>
+  </g>
+  <!-- top accent dot (live indicator) -->
+  <circle cx="128" cy="70" r="3.5" fill="#10b981"/>
+</svg>

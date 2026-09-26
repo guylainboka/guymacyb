@@ -6,6 +6,12 @@
 #
 # Linux+reaver : reaver -i <iface> -b <bssid> -K 1  (Pixie-Dust)
 #                reaver -i <iface> -b <bssid> -p <pin>
+#
+# Strategy:
+#   1. reaver ou bully (root + monitor mode) → attaque réelle
+#   2. Aucun backend disponible — état honnête (PAS de données simulées) :
+#      mode "reaver-required" / "root-required" / "no-wireless-hardware"
+#
 # Sortie : un objet JSON unique sur stdout.
 set -euo pipefail
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
@@ -16,7 +22,7 @@ BSSID="${1:-}"; IFACE="${2:-wlan0mon}"; MODE="${3:-pixie}"; PIN="${4:-}"
 log "wifi-wps" "BSSID=$BSSID iface=$IFACE mode=$MODE pin=${PIN:-none}"
 
 python3 - "$BSSID" "$IFACE" "$MODE" "$PIN" <<'PY'
-import json, os, random, re, subprocess, sys, time
+import json, os, re, subprocess, sys, time
 from datetime import datetime, timezone
 
 bssid, iface, mode, pin = sys.argv[1], sys.argv[2], sys.argv[3], sys.argv[4]
@@ -29,20 +35,47 @@ has_reaver = __import__("shutil").which("reaver") is not None
 has_bully = __import__("shutil").which("bully") is not None
 is_root = os.geteuid() == 0 if hasattr(os, "geteuid") else False
 
-if sys.platform != "linux" or not is_root or (not has_reaver and not has_bully):
-    # Simulation réaliste
-    result["method"] = "builtin-simulated"
-    result["progress"] = random.randint(10, 90)
-    if mode == "pixie" and random.random() < 0.35:
-        result["cracked"] = True
-        result["pin"] = f"{random.randint(10000000,99999999)}"
-        result["password"] = random.choice(["wifi1234","password","12345678","azertyuiop"])
-    elif mode == "pin" and pin:
-        result["pin"] = pin
-        if random.random() < 0.6:
-            result["cracked"] = True
-            result["password"] = random.choice(["wifi1234","password","12345678"])
-    result["note"] = "Simulation — reaver/root requis pour attaque réelle"
+def has_wireless_hardware():
+    """Return True if a /sys/class/net/*/wireless interface exists."""
+    try:
+        for dev in os.listdir("/sys/class/net"):
+            if os.path.isdir(f"/sys/class/net/{dev}/wireless"):
+                return True
+    except Exception:
+        pass
+    return False
+
+# État honnête : aucun backend temps réel disponible (PAS de données simulées).
+if sys.platform != "linux":
+    result["mode"] = "linux-required"
+    result["error"] = ("L'attaque WPS nécessite Linux (WSL sur Windows). "
+                      "Lancez wsl.exe -d Ubuntu -- bash security-scripts/wifi-wps-attack.sh <bssid> <iface> <mode>. "
+                      "GuymaCyb ne génère jamais de données simulées.")
+    print(json.dumps(result, ensure_ascii=False)); sys.exit(0)
+
+if not has_wireless_hardware():
+    result["mode"] = "no-wireless-hardware"
+    result["error"] = ("Aucun adaptateur sans-fil détecté sur ce système. "
+                      "L'attaque WPS nécessite une clé WiFi physique compatible mode monitor + reaver/bully (root). "
+                      "Sur Windows, ces outils tournent via WSL (wsl.exe -d Ubuntu -- airmon-ng start wlan0). "
+                      "GuymaCyb ne génère jamais de données simulées.")
+    print(json.dumps(result, ensure_ascii=False)); sys.exit(0)
+
+if not has_reaver and not has_bully:
+    result["mode"] = "reaver-required"
+    result["error"] = ("Attaque WPS indisponible : reaver (et bully) ne sont pas installés. "
+                      "Installez via WSL (Windows) : apt install reaver bully. "
+                      "reaver -K 1 lance l'attaque Pixie-Dust sur le WPS PIN de l'AP cible. "
+                      "GuymaCyb ne génère jamais de données simulées.")
+    print(json.dumps(result, ensure_ascii=False)); sys.exit(0)
+
+if not is_root:
+    result["mode"] = "root-required"
+    result["error"] = ("Attaque WPS indisponible : privilèges root requis. "
+                      "reaver/bully accèdent à l'interface réseau brute en mode monitor (raw socket). "
+                      "Relancez via : sudo bash security-scripts/wifi-wps-attack.sh <bssid> <iface> <mode> [pin], "
+                      "ou sous WSL : wsl.exe -d Ubuntu -u root -- bash ... "
+                      "GuymaCyb ne génère jamais de données simulées.")
     print(json.dumps(result, ensure_ascii=False)); sys.exit(0)
 
 # Attaque réelle

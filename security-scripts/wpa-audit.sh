@@ -7,8 +7,8 @@
 # Strategy (in order, first one that works wins):
 #   1. `iw dev <iface> scan` detailed (find AP by BSSID/SSID, parse RSN/WPA/HE)
 #   2. `wpa_supplicant` info (current association) — passive only
-#   3. `aircrack-ng` — NOT typically available here
-#   4. builtin-simulated — realistic audit based on a synthetic AP matching the target
+#   3. Aucun backend disponible — état honnête (PAS de données simulées) :
+#      mode "aircrack-ng-required" / "no-wireless-hardware" / "target-not-found"
 #
 # Computes:
 #   - PMF status (supported/enabled/requirement)
@@ -194,61 +194,15 @@ def aircrack_present():
     except Exception:
         return False
 
-# Builtin-simulated audit --------------------------------------------
-# We craft a deterministic, realistic audit based on the target identifier.
-def builtin_audit():
-    """Return a realistic audit. The encryption is chosen based on a hash of the
-    target so different targets produce different audits — but the same target
-    always produces the same audit (reproducible)."""
-    h = sum(ord(c) for c in target) % 5
-    profiles = [
-        # idx 0: WPA3 + PMF required (good)
-        {
-            "bssid": target if is_bssid(target) else "F4:CA:E5:11:22:01",
-            "ssid": "FreeWifi_secure" if not is_bssid(target) else "FreeWifi_secure",
-            "encryption": "WPA3", "cipher": "GCMP", "authMode": "SAE",
-            "pmf": {"supported": True, "enabled": True, "requirement": "REQUIRED"},
-            "wps": {"enabled": False, "locked": False, "version": "", "pinMethod": ""},
-            "channel": 36, "frequency": 5180,
-        },
-        # idx 1: WPA2/WPA3 mixed mode + WPS enabled
-        {
-            "bssid": target if is_bssid(target) else "8C:DC:D4:00:11:02",
-            "ssid": "Livebox-AB12" if not is_bssid(target) else "Livebox-AB12",
-            "encryption": "WPA2/WPA3", "cipher": "CCMP", "authMode": "PSK/SAE",
-            "pmf": {"supported": True, "enabled": False, "requirement": "OPTIONAL"},
-            "wps": {"enabled": True, "locked": False, "version": "2.0", "pinMethod": "PIN/PBC"},
-            "channel": 11, "frequency": 2462,
-        },
-        # idx 2: WPA2 without PMF + WPS enabled (common consumer router)
-        {
-            "bssid": target if is_bssid(target) else "00:1A:11:33:55:03",
-            "ssid": "Bbox-A1B2C3" if not is_bssid(target) else "Bbox-A1B2C3",
-            "encryption": "WPA2", "cipher": "CCMP", "authMode": "PSK",
-            "pmf": {"supported": True, "enabled": False, "requirement": "OPTIONAL"},
-            "wps": {"enabled": True, "locked": False, "version": "2.0", "pinMethod": "PIN/PBC"},
-            "channel": 6, "frequency": 2437,
-        },
-        # idx 3: WEP (vulnerable)
-        {
-            "bssid": target if is_bssid(target) else "00:0C:E6:DE:AD:08",
-            "ssid": "Cafe-des-Amis" if not is_bssid(target) else "Cafe-des-Amis",
-            "encryption": "WEP", "cipher": "WEP-104", "authMode": "",
-            "pmf": {"supported": False, "enabled": False, "requirement": "DISABLED"},
-            "wps": {"enabled": False, "locked": False, "version": "", "pinMethod": ""},
-            "channel": 9, "frequency": 2452,
-        },
-        # idx 4: OPEN (very bad)
-        {
-            "bssid": target if is_bssid(target) else "AC:84:C6:AA:BB:06",
-            "ssid": "Guest-WiFi" if not is_bssid(target) else "Guest-WiFi",
-            "encryption": "OPEN", "cipher": "", "authMode": "",
-            "pmf": {"supported": False, "enabled": False, "requirement": "DISABLED"},
-            "wps": {"enabled": False, "locked": False, "version": "", "pinMethod": ""},
-            "channel": 6, "frequency": 2437,
-        },
-    ]
-    return profiles[h]
+def has_wireless_hardware():
+    """Return True if a /sys/class/net/*/wireless interface exists."""
+    try:
+        for dev in os.listdir("/sys/class/net"):
+            if os.path.isdir(f"/sys/class/net/{dev}/wireless"):
+                return True
+    except Exception:
+        pass
+    return False
 
 # ============================================================
 #  Vulnerability detection + grade
@@ -346,7 +300,8 @@ def compute_grade(ap, vulns):
 start = time.time()
 
 ap = None
-mode = "builtin-simulated"
+mode = "aircrack-ng-required"
+error_msg = None
 
 ap = try_iw_scan()
 if ap:
@@ -355,13 +310,38 @@ else:
     ap = try_wpa_supplicant()
     if ap:
         mode = "wpa_supplicant"
+
+if ap is None:
+    # Aucun backend temps réel n'a produit de données — état honnête (PAS de simulation).
+    if not has_wireless_hardware():
+        mode = "no-wireless-hardware"
+        error_msg = ("Aucun adaptateur sans-fil détecté sur ce système. "
+                     "L'audit WPA réel nécessite une clé WiFi physique compatible mode monitor + aircrack-ng. "
+                     "Sur Windows, ces outils tournent via WSL (wsl.exe -d Ubuntu -- apt install aircrack-ng, puis airmon-ng start wlan0). "
+                     "GuymaCyb ne génère JAMAIS de données simulées.")
+    elif not aircrack_present():
+        mode = "aircrack-ng-required"
+        error_msg = ("Audit WPA réel indisponible : aircrack-ng n'est pas installé. "
+                     "Installez via WSL (Windows) : apt install aircrack-ng, puis airmon-ng start wlan0. "
+                     "L'audit nécessite une clé WiFi en mode monitor pour capturer les balises RSN/WPA réelles de l'AP cible. "
+                     "GuymaCyb ne génère jamais de données simulées.")
     else:
-        if aircrack_present():
-            # aircrack-ng is present but we cannot run it without monitor mode.
-            # Fall through to builtin-simulated.
-            pass
-        ap = builtin_audit()
-        mode = "builtin-simulated"
+        mode = "target-not-found"
+        error_msg = (f"Aucun AP correspondant à la cible '{target}' trouvé par iw/wpa_supplicant. "
+                     "aircrack-ng est installé mais le mode monitor n'est probablement pas activé. "
+                     "Exécutez en root : airmon-ng start wlan0, puis réessayez avec l'interface monitor (ex. wlan0mon). "
+                     "GuymaCyb ne génère jamais de données simulées.")
+    # Champs vides/honnêtes : pas de fausse donnée.
+    ap = {
+        "bssid": target if is_bssid(target) else "",
+        "ssid": "" if is_bssid(target) else target,
+        "encryption": "",
+        "cipher": "",
+        "authMode": "",
+        "pmf": {"supported": False, "enabled": False, "requirement": "DISABLED"},
+        "wps": {"enabled": False, "locked": False, "version": "", "pinMethod": ""},
+        "channel": 0, "frequency": 0,
+    }
 
 # Handshake info (always passive in this script — no monitor mode)
 handshake = {
@@ -376,8 +356,8 @@ handshake = {
 # Hidden SSID?
 ssid_hidden = (ap.get("ssid","") == "") or (ap.get("ssid","").lower() == "\\x00")
 
-vulns = build_vulnerabilities(ap, ssid_hidden=ssid_hidden)
-grade = compute_grade(ap, vulns)
+vulns = build_vulnerabilities(ap, ssid_hidden=ssid_hidden) if mode in ("iw","wpa_supplicant") else []
+grade = compute_grade(ap, vulns) if mode in ("iw","wpa_supplicant") else "N/A"
 
 out = {
     "tool": "wpa-audit",
@@ -394,5 +374,7 @@ out = {
     "grade": grade,
     "scannedAt": now_iso(),
 }
+if error_msg:
+    out["error"] = error_msg
 print(json.dumps(out, ensure_ascii=False))
 PY
