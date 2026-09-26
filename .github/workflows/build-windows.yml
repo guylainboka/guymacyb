@@ -164,7 +164,7 @@ jobs:
       # 10. Upload artifact (téléchargeable depuis l'onglet Actions)
       # ----------------------------------------------------------------------
       - name: 📤 Upload installer artifact
-        uses: actions/upload-artifact@v4
+        uses: actions/upload-artifact@v5
         with:
           name: GuymaCyb-Setup-windows-x64
           path: dist_electron/*.exe
