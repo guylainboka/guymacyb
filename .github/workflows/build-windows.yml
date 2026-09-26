@@ -117,29 +117,33 @@ jobs:
           ls -la staging/
 
       # ----------------------------------------------------------------------
-      # 8a. Décoder le certificat de signature (si secret WIN_CERT_PFX défini)
-      #     Stocker le .pfx en base64 dans Settings → Secrets → Actions
+      # 8. Package + signature .exe (electron-builder)
+      #    Le certificat .pfx est décodé en bash si le secret WIN_CERT_PFX
+      #    est défini (on ne peut PAS utiliser `secrets` dans un `if:` —
+      #    GitHub Actions le refuse. On passe donc par env + check bash).
       # ----------------------------------------------------------------------
-      - name: 🔑 Decode signing certificate (si secret défini)
-        if: ${{ secrets.WIN_CERT_PFX != '' }}
+      - name: 🪟 Build + sign .exe installer (electron-builder)
         shell: bash
-        run: |
-          mkdir -p desktop/signing
-          echo "${{ secrets.WIN_CERT_PFX }}" | base64 -d > desktop/signing/ci-cert.pfx
-          echo "Certificat de signature décodé ($(wc -c < desktop/signing/ci-cert.pfx) bytes)"
-
-      # ----------------------------------------------------------------------
-      # 8b. Package avec electron-builder (NSIS installer)
-      #     + signature Authenticode automatique si ci-cert.pfx est présent
-      # ----------------------------------------------------------------------
-      - name: 🪟 Build .exe installer (electron-builder)
-        run: npx electron-builder --win nsis --x64
         env:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
           NODE_ENV: production
-          CSC_LINK: ${{ github.workspace }}\desktop\signing\ci-cert.pfx
-          CSC_KEY_PASSWORD: ${{ secrets.WIN_CERT_PASSWORD }}
+          WIN_CERT_PFX: ${{ secrets.WIN_CERT_PFX }}
+          WIN_CERT_PASSWORD: ${{ secrets.WIN_CERT_PASSWORD }}
           CSC_IDENTITY_AUTO_DISCOVERY: 'false'
+        run: |
+          set -e
+          # Décode le certificat si le secret est défini (check bash, pas `if: secrets`)
+          if [ -n "$WIN_CERT_PFX" ]; then
+            mkdir -p desktop/signing
+            printf '%s' "$WIN_CERT_PFX" | base64 -d > desktop/signing/ci-cert.pfx
+            export CSC_LINK="$(pwd)/desktop/signing/ci-cert.pfx"
+            export CSC_KEY_PASSWORD="$WIN_CERT_PASSWORD"
+            echo "✓ Signature Authenticode activée ($(wc -c < desktop/signing/ci-cert.pfx) bytes)"
+          else
+            echo "ℹ Pas de secret WIN_CERT_PFX — .exe non signé"
+          fi
+          # Build NSIS installer (electron-builder signe auto si CSC_LINK est exporté)
+          npx electron-builder --win nsis --x64
 
       # ----------------------------------------------------------------------
       # 9. Vérifier l'installateur final
