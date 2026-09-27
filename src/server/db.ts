@@ -11,7 +11,14 @@ export async function getDatabase(): Promise<Database> {
     return dbInstance;
   }
 
-  const SQL = await initSqlJs();
+  // sql.js ne trouve PAS sql-wasm.wasm par défaut via __dirname (contrairement à
+  // ce que dit la doc) — il cherche dans process.cwd(). En production (Electron),
+  // le serveur tourne avec cwd=resources/ mais le wasm est à resources/dist-server/.
+  // On fournit donc locateFile qui pointe explicitement vers __dirname (le dossier
+  // du bundle server.cjs = dist-server/, où le wasm est copié par build-server-bundle).
+  const SQL = await initSqlJs({
+    locateFile: (file: string) => path.join(__dirname, file),
+  });
 
   if (fs.existsSync(DB_FILE_PATH)) {
     try {

@@ -193,20 +193,29 @@ function startBackendServer() {
     windowsHide: true,
   });
 
+  // Capture stdout + stderr pour le diagnostic de crash
+  let backendOutput = '';
   child.stdout.on('data', (d) => {
-    process.stdout.write(`[server] ${d}`);
+    const s = d.toString();
+    backendOutput += s;
+    process.stdout.write(`[server] ${s}`);
   });
   child.stderr.on('data', (d) => {
-    process.stderr.write(`[server] ${d}`);
+    const s = d.toString();
+    backendOutput += s;
+    process.stderr.write(`[server] ${s}`);
   });
 
   child.on('exit', (code, signal) => {
     console.log(`[GuymaCyb] backend exited (code=${code} signal=${signal})`);
     if (!isQuitting && code !== 0) {
+      // Inclure la sortie réelle du backend dans le dialog pour diagnostic
+      const lastOutput = backendOutput.slice(-2000).trim() || '(aucune sortie)';
       dialog.showErrorBox(
         `${APP_NAME} — backend crash`,
-        `Le moteur Guyma Cyb s'est arrêté de façon inattendue (code ${code}).\n` +
-          `L'application va se fermer. Redémarrez ${APP_NAME}.`
+        `Le moteur Guyma Cyb s'est arrêté de façon inattendue (code ${code}).\n\n` +
+          `L'application va se fermer.\n\n` +
+          `═══ Détails de l'erreur (envoyez ceci au support) ═══\n${lastOutput}`
       );
       app.quit();
     }
@@ -216,7 +225,8 @@ function startBackendServer() {
     console.error('[GuymaCyb] failed to spawn backend:', err);
     dialog.showErrorBox(
       `${APP_NAME} — erreur de démarrage`,
-      `Impossible de démarrer le moteur backend :\n\n${err.message}`
+      `Impossible de démarrer le moteur backend :\n\n${err.message}\n\n` +
+        `Vérifiez que ${SERVER_BUNDLE} existe dans le dossier d'installation.`
     );
     app.quit();
   });
