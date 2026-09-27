@@ -23,22 +23,30 @@ directories:
   output: dist_electron
   buildResources: desktop/assets
 
-# Files bundled INSIDE the Electron app package (resources/app/).
-# Note: the Rust exe, security scripts, and bundled tools go under `extraResources`
-# below so they live OUTSIDE resources/app/ at resources/ (cleaner separation and
-# accessible via process.resourcesPath in electron-main.cjs).
+# Files bundled INSIDE the Electron app.asar archive.
+# ATTENTION : seuls les fichiers lus par le PROCESSUS PRINCIPAL Electron vont ici
+# (lui seul lit l'asar). Le serveur Express (processus enfant) et express.static
+# ne peuvent PAS lire dans l'asar → dist/ et dist-server/ vont dans extraResources
+# ci-dessous pour être déballés en fichiers réels sous resources/.
 files:
-  - dist/**/*
-  - dist-server/**/*
   - desktop/electron-main.cjs
   - desktop/setup-preload.cjs
   - desktop/setup-wizard.html
   - package.json
 
-# extraResources are copied verbatim under process.resourcesPath at runtime.
-# electron-main.cjs resolves SHADOWSCAN_CORE_PATH and SECURITY_SCRIPTS_DIR from
-# there, and augments PATH so security scripts find bundled nmap/openssl.
+# extraResources sont copiés tels quels sous process.resourcesPath/ (fichiers RÉELS,
+# accessibles par le serveur Express enfant + express.static + child_process spawn).
+# electron-main.cjs résout SHADOWSCAN_CORE_PATH, SECURITY_SCRIPTS_DIR, le bundle
+# serveur et le frontend dist/ depuis ici.
 extraResources:
+  # Frontend Vite build (HTML/CSS/JS servi par express.static) — DOIT être un fichier réel
+  - from: dist
+    to: dist
+    filter: ["**/*"]
+  # Bundle Express (server.cjs + sql-wasm.wasm) — lancé comme child_process, DOIT être réel
+  - from: dist-server
+    to: dist-server
+    filter: ["**/*"]
   - from: shadowscan-core/target/x86_64-pc-windows-gnu/release/shadowscan-core.exe
     to: shadowscan-core/shadowscan-core.exe
     filter: ["**/*"]
