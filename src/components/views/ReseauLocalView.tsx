@@ -14,7 +14,8 @@ interface ScanResult {
   tool?: string;
   mode?: string;
   devices?: LocalDevice[];
-  total?: number;
+  /** Le script localnetwork-scan.sh renvoie `totalCount` (pas `total`). */
+  totalCount?: number;
   byProtocol?: Record<string, number>;
   scannedAt?: string;
   durationMs?: number;
@@ -149,7 +150,7 @@ export const ReseauLocalView: React.FC = () => {
             <div className="grid grid-cols-2 sm:grid-cols-3 lg:grid-cols-6 gap-3 mb-4">
               <div className="bg-[#171b26] border border-[#24314c] rounded-lg p-3">
                 <div className="text-[10px] text-[#8c909f] font-mono uppercase">Total appareils</div>
-                <div className="text-2xl font-bold text-[#dfe2f1]">{result.total ?? devices.length}</div>
+                <div className="text-2xl font-bold text-[#dfe2f1]">{result.totalCount ?? devices.length}</div>
               </div>
               <div className="bg-[#171b26] border border-[#24314c] rounded-lg p-3">
                 <div className="text-[10px] text-[#8c909f] font-mono uppercase">mDNS</div>

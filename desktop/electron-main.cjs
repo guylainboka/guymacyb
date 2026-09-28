@@ -133,6 +133,15 @@ function buildServerEnv() {
   env.SHADOWSCAN_CORE_PATH = RUST_CORE;
   env.SECURITY_SCRIPTS_DIR = SECURITY_SCRIPTS_DIR;
 
+  // Base SQLite dans le dossier userData (%APPDATA%/Guyma Cyb) — l'ancien
+  // comportement écrivait shadow_core.db dans le dossier d'installation
+  // (Program Files) ce qui échoue sans droits admin sous Windows.
+  try {
+    env.GCYB_DB_PATH = path.join(app.getPath('userData'), 'shadow_core.db');
+  } catch (e) {
+    console.warn('[GuymaCyb] userData path unavailable, DB falls back to cwd:', e);
+  }
+
   // Augment PATH so the security scripts (which call nmap, openssl, dig, …)
   // can find bundled Windows builds of those tools if the user shipped them
   // under tools/ (the installer can optionally bundle nmap, OpenSSL-Win64, etc).
@@ -419,19 +428,20 @@ async function detectAll() {
 }
 
 /**
- * Installe WSL avec élévation UAC (Windows).
- * Utilise PowerShell Start-Process -Verb RunAs pour élever wsl --install.
+ * Installe WSL avec élévation UAC (Windows) — TOUJOURS à l'initiative de
+ * l'utilisateur (bouton du wizard, jamais lancé automatiquement).
+ * Utilise PowerShell Start-Process -Verb RunAs pour élever `wsl --install`.
  */
 function installWslElevated(progress) {
   return new Promise((resolve) => {
     if (!IS_WIN) {
       return resolve({ exitCode: 0, output: 'Mode Linux natif — aucune installation WSL requise', rebootRequired: false });
     }
-    // wsl --install --no-distribution pour éviter le téléchargement long du distro par défaut
-    // (le wizard propose ensuite d'installer les outils). Mais l'activation du kernel WSL
-    // requiert un redémarrage. On lance via PowerShell élevé.
-    const psScript = `Start-Process wsl.exe -ArgumentList '--install','--no-distribution','-d','${WSL_DISTRO}' -Verb RunAs -Wait -PassThru | Select-Object -ExpandProperty ExitCode`;
-    progress('$ wsl --install --no-distribution -d ' + WSL_DISTRO + '  (UAC)');
+    // Installe WSL + la distro par défaut en une commande. L'ancien code passait
+    // `--no-distribution` ET `-d <distro>` — combinaison contradictoire rejetée
+    // par wsl.exe. La distro est nécessaire à l'étape 3 (outils apt).
+    const psScript = `Start-Process wsl.exe -ArgumentList '--install','-d','${WSL_DISTRO}' -Verb RunAs -Wait -PassThru | Select-Object -ExpandProperty ExitCode`;
+    progress('$ wsl --install -d ' + WSL_DISTRO + '  (élévation UAC)');
     const child = spawn('powershell.exe', ['-NoProfile', '-Command', psScript], {
       stdio: ['ignore', 'pipe', 'pipe'],
       windowsHide: true,
@@ -442,7 +452,7 @@ function installWslElevated(progress) {
     child.on('close', (code) => {
       // Vérifie si un redémarrage est nécessaire (WSL2 kernel install requiert reboot)
       const rebootRequired = /restart|reboot|redémarr/i.test(out);
-      progress(rebootRequired ? '⚠ Redémarrage requis pour activer le kernel WSL.' : '✓ Commande wsl --install terminée.');
+      progress(rebootRequired ? '⚠ Redémarrage requis pour activer WSL.' : '✓ Commande wsl --install terminée.');
       resolve({ exitCode: code ?? 0, output: out, rebootRequired });
     });
     child.on('error', (e) => {
@@ -523,6 +533,36 @@ ipcMain.handle('setup:launch-app', async (event) => {
   return { ok: true };
 });
 
+// ---------------------------------------------------------------------------
+// IPC contrôles de fenêtre (consommés par le Header via main-preload.cjs)
+// ---------------------------------------------------------------------------
+
+ipcMain.handle('window:minimize', () => {
+  if (mainWindow) mainWindow.minimize();
+});
+
+ipcMain.handle('window:maximize', () => {
+  if (!mainWindow) return false;
+  if (mainWindow.isFullScreen()) {
+    mainWindow.setFullScreen(false);
+    return false;
+  }
+  if (mainWindow.isMaximized()) {
+    mainWindow.unmaximize();
+    return false;
+  }
+  mainWindow.maximize();
+  return true;
+});
+
+ipcMain.handle('window:close', () => {
+  if (mainWindow) mainWindow.close();
+});
+
+ipcMain.handle('window:is-fullscreen', () => {
+  return mainWindow ? mainWindow.isFullScreen() || mainWindow.isMaximized() : false;
+});
+
 ipcMain.handle('setup:skip', async (event) => {
   try {
     fs.writeFileSync(SETUP_DONE_FILE, JSON.stringify({ completedAt: new Date().toISOString(), skipped: true }));
@@ -589,6 +629,7 @@ function createWindow() {
       nodeIntegration: false,
       contextIsolation: true,
       sandbox: true,
+      preload: path.join(__dirname, 'main-preload.cjs'),
       devTools: IS_DEV,
     },
   });

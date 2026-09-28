@@ -16,8 +16,8 @@ interface SearchsploitResult {
   tool?: string;
   query?: string;
   results?: ExploitEntry[];
-  count?: number;
-  installed?: boolean;
+  /** arsenal-searchsploit.sh renvoie `totalCount` (pas `count`). */
+  totalCount?: number;
   output?: string;
   error?: string;
 }
@@ -36,7 +36,6 @@ interface HashcatResult {
   password?: string;            // not returned by the API (kept for backward compat)
   plaintext?: string;           // not returned by the API (kept for backward compat)
   output?: string;
-  exitCode?: number;
   durationMs?: number;
   error?: string;
 }
@@ -192,7 +191,7 @@ export const ArsenalView: React.FC = () => {
                 <div className="bg-[#171b26] border border-[#24314c] rounded-lg p-3 flex items-center justify-between">
                   <div className="text-xs font-mono text-[#8c909f]">
                     Requête: <span className="text-[#4cd7f6]">{ssResult.query}</span> •
-                    {' '}{ssResult.count ?? ssResults.length} résultat(s)
+                    {' '}{ssResult.totalCount ?? ssResults.length} résultat(s)
                   </div>
                   <div className="text-[10px] text-[#8c909f]">via {ssResult.tool || 'searchsploit'}</div>
                 </div>
@@ -312,7 +311,7 @@ export const ArsenalView: React.FC = () => {
                       : <span className="text-[#ffb4ab]">non cracké</span>
                     }
                   </div>
-                  <div className="text-[10px] text-[#8c909f]">{hcResult.durationMs ? `${hcResult.durationMs}ms` : ''} • exit={hcResult.exitCode ?? '—'}</div>
+                  <div className="text-[10px] text-[#8c909f]">{hcResult.durationMs ? `${hcResult.durationMs}ms` : ''}</div>
                 </div>
                 {(hcResult.cracked || hcResult.password) && (
                   <div className="px-4 py-3 bg-emerald-500/10 border-b border-emerald-500/30 flex items-center gap-2">

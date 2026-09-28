@@ -2,6 +2,7 @@ import express from 'express';
 import { createServer as createViteServer } from 'vite';
 import path from 'path';
 import fs from 'fs';
+import os from 'os';
 import { getDatabase, saveDatabaseToDisk, getDbFilePath } from './src/server/db';
 import { checkConnectivity, runRealAnalysis } from './src/server/scanner';
 import {
@@ -17,11 +18,27 @@ import { COURSE_NOTIONS } from './src/data/courseNotions';
 import { getOrCreateInstallerExeBuffer, getPackagingInfo } from './src/server/packaging';
 import * as tb from './src/server/toolbridge';
 
-const PORT = 3000;
+// PORT/HOST configurables : Electron (electron-main.cjs) injecte PORT=3000 et
+// HOST=127.0.0.1. En dev on écoute par défaut sur le loopback UNIQUEMENT — un
+// outil de cybersécurité ne doit jamais exposer son API sur toutes les
+// interfaces (l'ancien code faisait app.listen(PORT, '0.0.0.0')).
+const PORT = Number(process.env.PORT) || 3000;
+const HOST = process.env.HOST || '127.0.0.1';
 
 async function startServer() {
   const app = express();
-  app.use(express.json());
+
+  // Durcissement de base
+  app.disable('x-powered-by');
+  app.set('trust proxy', false);
+  app.use((_req, res, next) => {
+    res.setHeader('X-Content-Type-Options', 'nosniff');
+    res.setHeader('X-Frame-Options', 'SAMEORIGIN');
+    res.setHeader('Referrer-Policy', 'no-referrer');
+    next();
+  });
+
+  app.use(express.json({ limit: '2mb' }));
 
   // Initialize SQLite database on boot
   try {
@@ -54,7 +71,7 @@ async function startServer() {
           findingsCount: findingsCount,
         },
         memoryMb: Math.round(process.memoryUsage().heapUsed / 1024 / 1024),
-        threads: 8,
+        threads: os.cpus().length, // valeur réelle (l'ancien code hardcoded 8)
       });
     } catch (err: any) {
       res.status(500).json({ error: err.message });
@@ -753,6 +770,12 @@ async function startServer() {
     }
   });
 
+  // 404 JSON propre pour toute route /api inconnue — DOIT être avant l'intégration
+  // Vite/static (sinon app.get('*') renvoie le HTML de l'index pour les /api GET).
+  app.use('/api', (_req, res) => {
+    res.status(404).json({ error: `Endpoint inconnu : ${_req.method} ${_req.originalUrl}` });
+  });
+
   // Vite integration
   const isProd = process.env.NODE_ENV === 'production';
   if (!isProd) {
@@ -769,8 +792,49 @@ async function startServer() {
     });
   }
 
-  app.listen(PORT, '0.0.0.0', () => {
-    console.log(`[ShadowScan] Server listening on http://0.0.0.0:${PORT}`);
+  // Gestionnaire d'erreurs global — capture notamment les erreurs de parsing
+  // JSON (body malformé) et toute erreur asynchrone échappée aux try/catch.
+  app.use((err: any, _req: express.Request, res: express.Response, _next: express.NextFunction) => {
+    if (err?.type === 'entity.parse.failed' || err instanceof SyntaxError) {
+      return res.status(400).json({ error: 'Corps de requête JSON invalide' });
+    }
+    console.error('[ShadowScan] Unhandled error:', err);
+    if (res.headersSent) return;
+    res.status(500).json({ error: err?.message || 'Erreur interne du serveur' });
+  });
+
+  const server = app.listen(PORT, HOST, () => {
+    console.log(`[ShadowScan] Server listening on http://${HOST}:${PORT} (pid ${process.pid})`);
+  });
+
+  // Augmente la robustesse réseau : plus de marge pour les requêtes longues
+  // (scans nmap/nikto proxyés) et keep-alive ajusté.
+  server.requestTimeout = 0;           // pas de limite globale (les endpoints gèrent leurs propres timeouts)
+  server.headersTimeout = 65_000;
+  server.keepAliveTimeout = 30_000;
+
+  // Arrêt gracieux : sauvegarde SQLite + fermeture propre (Ctrl-C, taskkill, SIGTERM)
+  let shuttingDown = false;
+  const shutdown = (signal: string) => {
+    if (shuttingDown) return;
+    shuttingDown = true;
+    console.log(`[ShadowScan] ${signal} reçu — arrêt gracieux…`);
+    try { saveDatabaseToDisk(); } catch (e) { console.warn('[ShadowScan] DB save on shutdown failed:', e); }
+    server.close(() => {
+      console.log('[ShadowScan] Serveur arrêté proprement.');
+      process.exit(0);
+    });
+    // Filet de sécurité si server.close() pend (connexions ouvertes)
+    setTimeout(() => process.exit(0), 4000).unref();
+  };
+  process.on('SIGINT', () => shutdown('SIGINT'));
+  process.on('SIGTERM', () => shutdown('SIGTERM'));
+  process.on('uncaughtException', (err) => {
+    console.error('[ShadowScan] uncaughtException:', err);
+    shutdown('uncaughtException');
+  });
+  process.on('unhandledRejection', (reason) => {
+    console.error('[ShadowScan] unhandledRejection:', reason);
   });
 }
 

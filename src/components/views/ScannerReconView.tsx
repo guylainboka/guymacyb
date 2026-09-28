@@ -37,32 +37,29 @@ export const ScannerReconView: React.FC<ScannerReconViewProps> = ({
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({ url: targetConfig.url }),
       });
+      if (!res.ok) {
+        const errData = await res.json().catch(() => ({ error: 'Erreur inconnue' }));
+        throw new Error(errData.error || `HTTP ${res.status}`);
+      }
       const data = await res.json();
       setReconReport(data);
-    } catch {
+    } catch (err: any) {
+      // Doctrine "zéro simulation" : aucune donnée inventée en cas d'échec.
+      // L'ancien catch injectait un faux rapport (IP 93.184.216.34, ports OPEN
+      // fictifs, bannière serveur inventée) — interdit pour un outil défensif.
       setReconReport({
         target: targetConfig.url,
-        primaryIp: '93.184.216.34',
-        allIps: ['93.184.216.34', '2606:2800:220:1:248:1893:25c8:1946'],
-        serverBanner: 'ECS (dcb/7f83)',
-        portAudit: [
-          { port: 80, status: 'OPEN', service: 'http' },
-          { port: 443, status: 'OPEN', service: 'https' },
-          { port: 8080, status: 'FILTERED', service: 'http-alt' },
-          { port: 8443, status: 'FILTERED', service: 'https-alt' },
-        ],
-        missingSecurityHeaders: [
-          'Content-Security-Policy (CSP)',
-          'Strict-Transport-Security (HSTS)',
-          'Permissions-Policy',
-        ],
+        domain: targetConfig.url,
+        primaryIp: null,
+        allIps: [],
+        serverBanner: '—',
+        httpStatus: null,
+        portAudit: [],
+        missingSecurityHeaders: [],
+        error: err?.message || 'Reconnaissance impossible',
         reconLogs: [
           `[RECON_INIT] Démarrage de la reconnaissance automatisée sur ${targetConfig.url}`,
-          '[DNS_RESOLVE] Adresses IPv4 identifiées: 93.184.216.34',
-          '[PORT_PROBE] Port 80/tcp (http) : OUVERT',
-          '[PORT_PROBE] Port 443/tcp (https) : OUVERT',
-          '[PORT_PROBE] Port 8080/tcp (http-alt) : FILTRÉ',
-          '[BANNER_GRAB] Empreinte serveur identifiée : ECS (dcb/7f83)',
+          `[RECON_FAIL] Échec : ${err?.message || 'erreur réseau'} — vérifiez la cible et le backend.`,
         ],
       });
     } finally {
@@ -88,9 +85,11 @@ export const ScannerReconView: React.FC<ScannerReconViewProps> = ({
       } else {
         setTestConnectStatus(`Avertissement : ${data.error} (${data.latencyMs}ms)`);
       }
-    } catch {
+    } catch (err: any) {
       setIsPinging(false);
-      setTestConnectStatus('HTTP 200 OK • Latence 18ms • TLS 1.3');
+      // L'ancien catch affichait "HTTP 200 OK • Latence 18ms • TLS 1.3" — un
+      // faux succès. On affiche l'erreur réelle.
+      setTestConnectStatus(`Cible injoignable / backend injoignable : ${err?.message || 'erreur réseau'}`);
     }
   };
 
@@ -291,7 +290,7 @@ export const ScannerReconView: React.FC<ScannerReconViewProps> = ({
                 </span>
               </div>
               <p className="text-[11px] text-[#8c909f] mt-0.5">
-                Testez en bac à sable sécurisé les 10 vecteurs d'attaque majeurs (SQLi, XSS, SSRF, IDOR, JWT) et lancez une reconnaissance automatisée.
+                Testez en bac à sable sécurisé les 8 vecteurs d'attaque majeurs (SQLi, XSS, SSRF, IDOR, JWT) et lancez une reconnaissance automatisée.
               </p>
             </div>
           </div>
@@ -316,7 +315,7 @@ export const ScannerReconView: React.FC<ScannerReconViewProps> = ({
                 className="px-3 py-1.5 rounded bg-[#93000a]/30 hover:bg-[#93000a]/50 text-[#ffb4ab] border border-[#ffb4ab]/40 text-xs font-mono font-bold flex items-center gap-1.5 transition-all"
               >
                 <span className="material-symbols-outlined text-[15px]">biotech</span>
-                <span>Ouvrir le Cyber Lab (10 Vecteurs)</span>
+                <span>Ouvrir le Cyber Lab (8 Vecteurs)</span>
               </button>
             )}
           </div>
@@ -336,20 +335,20 @@ export const ScannerReconView: React.FC<ScannerReconViewProps> = ({
             <div className="grid grid-cols-1 md:grid-cols-3 gap-3">
               <div className="p-2.5 bg-[#171b26] rounded border border-[#24314c]">
                 <span className="text-[10px] text-[#8c909f] block">IP Principale & DNS :</span>
-                <strong className="text-white text-xs">{reconReport.primaryIp}</strong>
-                <span className="text-[10px] text-[#10b981] block mt-0.5">IPv4 résolue</span>
+                <strong className="text-white text-xs">{reconReport.primaryIp || 'Non résolue'}</strong>
+                <span className="text-[10px] text-[#10b981] block mt-0.5">{reconReport.primaryIp ? 'IPv4 résolue' : 'Résolution DNS échouée'}</span>
               </div>
 
               <div className="p-2.5 bg-[#171b26] rounded border border-[#24314c]">
                 <span className="text-[10px] text-[#8c909f] block">Bannière Serveur :</span>
-                <strong className="text-white text-xs">{reconReport.serverBanner}</strong>
+                <strong className="text-white text-xs">{reconReport.serverBanner || '—'}</strong>
                 <span className="text-[10px] text-[#c2c6d6] block mt-0.5">Empreinte HTTP</span>
               </div>
 
               <div className="p-2.5 bg-[#171b26] rounded border border-[#24314c]">
                 <span className="text-[10px] text-[#8c909f] block">Sondes de Ports Réseau :</span>
                 <div className="flex items-center gap-1.5 mt-1">
-                  {reconReport.portAudit.map((p: any) => (
+                  {(reconReport.portAudit || []).map((p: any) => (
                     <span
                       key={p.port}
                       className={`px-1.5 py-0.5 rounded text-[9px] font-bold ${

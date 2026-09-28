@@ -177,7 +177,7 @@ export const Sidebar: React.FC<SidebarProps> = ({
             <span className="inline-block w-1.5 h-1.5 rounded-full bg-[#10b981]"></span>
             Local Agent: OK
           </span>
-          <span className="text-[#8c909f]">Port 9090</span>
+          <span className="text-[#8c909f]">Port 3000</span>
         </div>
         <div className="flex items-center justify-between text-[#c2c6d6] px-1 pt-1 border-t border-[#171b26]">
           <button

@@ -25,7 +25,7 @@ export const ActiveTestsView: React.FC<ActiveTestsViewProps> = ({
   setSafeMode,
 }) => {
   const [selectedFamily, setSelectedFamily] = useState<ActiveTestFamily>(testFamilies[2]); // Default B.A.C.
-  const [progress, setProgress] = useState<number>(68);
+  const [progress, setProgress] = useState<number>(0);
   const [logFilter, setLogFilter] = useState<string>('');
   const [autoScroll, setAutoScroll] = useState<boolean>(true);
   const terminalEndRef = useRef<HTMLDivElement>(null);
@@ -40,6 +40,9 @@ export const ActiveTestsView: React.FC<ActiveTestsViewProps> = ({
   // Simulate progress advance during active test
   useEffect(() => {
     if (!isTesting) return;
+    // Repart de zéro à chaque nouveau lancement (l'ancien code gardait la
+    // valeur précédente, donc la barre restait collée à 100 %).
+    setProgress(0);
     const interval = setInterval(() => {
       setProgress((prev) => {
         if (prev >= 100) return 100;

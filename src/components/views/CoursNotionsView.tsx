@@ -23,18 +23,34 @@ const LEVEL_COLOR: Record<string, string> = {
 export const CoursNotionsView: React.FC<CoursNotionsViewProps> = ({ onGoToLab, onGoToWifi }) => {
   const [notions, setNotions] = useState<CourseNotion[]>([]);
   const [loading, setLoading] = useState<boolean>(true);
+  const [error, setError] = useState<string | null>(null);
   const [selected, setSelected] = useState<CourseNotion | null>(null);
   const [filter, setFilter] = useState<string>('ALL');
   const [search, setSearch] = useState<string>('');
 
   React.useEffect(() => {
+    let cancelled = false;
     fetch('/api/courses/notions')
-      .then((r) => r.json())
+      .then((r) => {
+        if (!r.ok) throw new Error(`HTTP ${r.status}`);
+        return r.json();
+      })
       .then((data) => {
-        setNotions(Array.isArray(data) ? data : []);
+        if (cancelled) return;
+        if (!Array.isArray(data)) throw new Error('Format de réponse inattendu');
+        setNotions(data);
+        setError(null);
         setLoading(false);
       })
-      .catch(() => setLoading(false));
+      .catch((err) => {
+        if (!cancelled) {
+          setError(err?.message || 'Erreur de chargement');
+          setLoading(false);
+        }
+      });
+    return () => {
+      cancelled = true;
+    };
   }, []);
 
   const filtered = useMemo(() => {
@@ -100,6 +116,18 @@ export const CoursNotionsView: React.FC<CoursNotionsViewProps> = ({ onGoToLab, o
         <div className="flex items-center gap-3">
           <span className="material-symbols-outlined animate-spin">progress_activity</span>
           Chargement des notions...
+        </div>
+      </div>
+    );
+  }
+
+  if (error && notions.length === 0) {
+    return (
+      <div className="h-full flex items-center justify-center bg-[#0a0e18] text-[#8c909f] p-6">
+        <div className="flex flex-col items-center gap-3 text-center max-w-md">
+          <span className="material-symbols-outlined text-[#fbbf24] text-[36px]">cloud_off</span>
+          <p className="font-mono text-sm">Impossible de charger les notions ({error}).</p>
+          <p className="text-xs">Vérifiez que le moteur backend Guyma Cyb est démarré, puis réessayez.</p>
         </div>
       </div>
     );

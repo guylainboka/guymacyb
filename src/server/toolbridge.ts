@@ -195,14 +195,28 @@ export async function getCoreStatus(): Promise<{
     })
   );
   const py = await whichTool('python3');
-  const distros = IS_WINDOWS ? await listWslDistros() : [];
+  // Détection WSL RÉELLE : sur Windows, on considère WSL disponible uniquement si
+  // au moins une distro est listée ET démarre. L'ancien code renvoyait
+  // `available: IS_WINDOWS` (toujours vrai sur Windows même sans WSL) — mensonge.
+  let wslAvailable = false;
+  let defaultDistro: string | null = null;
+  if (IS_WINDOWS) {
+    const distros = await listWslDistros();
+    wslAvailable = distros.length > 0;
+    if (wslAvailable) {
+      const test = await exec('wsl.exe', ['-d', distros[0].name, '--', 'echo', 'ok'], { timeoutMs: 10_000 });
+      wslAvailable = test.exitCode === 0 && test.stdout.includes('ok');
+    }
+    defaultDistro = distros[0]?.name || WSL_DISTRO;
+  }
   return {
     platform: process.platform,
     isWindows: IS_WINDOWS,
     wsl: {
-      available: IS_WINDOWS,
-      distros,
-      defaultDistro: distros[0]?.name || WSL_DISTRO,
+      // Linux natif : les outils s'exécutent directement — équivalent WSL disponible.
+      available: IS_WINDOWS ? wslAvailable : true,
+      distros: IS_WINDOWS ? await listWslDistros() : [],
+      defaultDistro,
     },
     tools: { available, missing },
     python: py,
@@ -214,10 +228,12 @@ export async function getCoreStatus(): Promise<{
 /** Installe les outils Linux manquants (apt) — sur Linux direct, sur Windows via WSL. */
 export async function installToolsViaApt(): Promise<{ output: string; exitCode: number }> {
   if (IS_WINDOWS) {
+    // `-u root` évite le prompt sudo interactif (impossible en non-interactif via
+    // wsl.exe) — même approche que le wizard de premier lancement.
     const res = await exec(
       'wsl.exe',
-      ['-d', WSL_DISTRO, '--', 'bash', '-c',
-       'sudo apt-get update && sudo apt-get install -y nmap nikto aircrack-ng tshark iperf3 dnsrecon whatweb sslscan sqlmap gobuster 2>&1'],
+      ['-d', WSL_DISTRO, '-u', 'root', '--', 'bash', '-c',
+       'apt-get update && apt-get install -y nmap nikto aircrack-ng tshark iperf3 dnsrecon whatweb sslscan sqlmap gobuster 2>&1'],
       { timeoutMs: 180_000 }
     );
     return { output: res.stdout + res.stderr, exitCode: res.exitCode };
@@ -468,7 +484,7 @@ async function nodeRealScan(url: string, scope: 'strict' | 'wildcard', operatorI
         title: `En-tête de sécurité manquant : ${hd.name}`,
         severity: hd.severity === 'HIGH' ? 'HIGH' : 'MEDIUM',
         cvss: hd.severity === 'HIGH' ? 6.5 : 4.3,
-        confidence: 0.9, status: 'VALIDATED',
+        confidence: 90, status: 'VALIDATED', // échelle 0-100, cohérente avec le reste de l'app
         affectedComponent: fetchRes.finalUrl, category: 'CONFIG',
         cwe: hd.name.includes('Transport') ? 'CWE-319' : 'CWE-693',
         description: `L'en-tête ${hd.name} n'est pas présent dans la réponse HTTP de ${fetchRes.finalUrl}.`,

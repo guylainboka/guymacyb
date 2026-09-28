@@ -16,7 +16,8 @@ export interface SimulationExecutionResult {
   responsePreview: string;
   wafIntercepted: boolean;
   securityObservations: string[];
-  findingCreated?: Finding;
+  /** Aligné sur le contrat frontend (SecurityLabView) et le lab WiFi : findingCandidate. */
+  findingCandidate?: Finding;
 }
 
 /**
@@ -52,7 +53,7 @@ export async function executeLabSimulation(
         'Poste défensif validé conforme.',
       ];
 
-  let findingCreated: Finding | undefined = undefined;
+  let findingCandidate: Finding | undefined = undefined;
 
   // Si le mode était "vulnérable", enregistrer la preuve dans la base SQLite locale
   if (isVulnerable) {
@@ -86,7 +87,7 @@ export async function executeLabSimulation(
         sqliteRow: 0,
       };
 
-      findingCreated = findingObj;
+      findingCandidate = findingObj;
 
       // Insertion dans SQLite
       db.run(
@@ -117,16 +118,19 @@ export async function executeLabSimulation(
         ]
       );
 
-      // Log d'audit
+      // Log d'audit — schéma réel de la table audit_logs :
+      // (id, timestamp, tag, text, operator_id) — cf. initTables() dans db.ts.
+      // L'ancien insert utilisait des colonnes inexistantes (event_type, message,
+      // metadata_json, created_at) → l'INSERT échouait et sautait
+      // saveDatabaseToDisk() : les preuves du lab n'étaient jamais persistées.
       db.run(
-        `INSERT INTO audit_logs (id, operator_id, event_type, message, metadata_json, created_at)
-         VALUES (?, ?, ?, ?, ?, datetime('now'))`,
+        `INSERT INTO audit_logs (id, timestamp, tag, text, operator_id)
+         VALUES (?, datetime('now'), ?, ?, ?)`,
         [
           `log-${Date.now()}`,
-          operatorId,
           'LAB_SIMULATION',
-          `Simulation défensive validée sur le vecteur ${vector.name}`,
-          JSON.stringify({ vectorId: vector.id, mode: targetMode, cvss }),
+          `Simulation défensive validée sur le vecteur ${vector.name} (id=${vector.id}, mode=${targetMode}, cvss=${cvss})`,
+          operatorId,
         ]
       );
 
@@ -147,7 +151,7 @@ export async function executeLabSimulation(
     responsePreview: isVulnerable ? vector.vulnerableResponseSample : vector.remediatedResponseSample,
     wafIntercepted,
     securityObservations: observations,
-    findingCreated,
+    findingCandidate,
   };
 }
 
@@ -232,78 +236,115 @@ export async function commitFullLabSuiteToReport(operatorId: string = 'SEC-OPS-0
 }
 
 /**
+ * Sondes TCP connect réelles (non intrusives, handshake puis fermeture immédiate).
+ * Retourne 'OPEN' / 'CLOSED' / 'FILTERED' selon le résultat réel du socket.
+ */
+function probeTcpPort(host: string, port: number, timeoutMs = 1500): Promise<'OPEN' | 'CLOSED' | 'FILTERED'> {
+  return new Promise((resolve) => {
+    const sock = new net.Socket();
+    let done = false;
+    const finish = (state: 'OPEN' | 'CLOSED' | 'FILTERED') => {
+      if (done) return;
+      done = true;
+      sock.destroy();
+      resolve(state);
+    };
+    sock.setTimeout(timeoutMs);
+    sock.on('connect', () => finish('OPEN'));
+    sock.on('timeout', () => finish('FILTERED'));
+    sock.on('error', (e: NodeJS.ErrnoException) =>
+      finish(e.code === 'ECONNREFUSED' || e.code === 'ECONNRESET' ? 'CLOSED' : 'FILTERED')
+    );
+    sock.connect(port, host);
+  });
+}
+
+/**
  * Module de Reconnaissance Avancée Automatisée
- * Analyse défensivement : DNS, SSL, ports standards, en-têtes et technologies.
+ * Analyse défensivement : DNS, ports réels, en-têtes et technologies.
+ * Doctrine "zéro simulation" : si une donnée ne peut pas être obtenue
+ * (DNS KO, HTTP KO…), elle est signalée comme telle — jamais inventée.
  */
 export async function runAutomatedReconSuite(targetUrl: string) {
   let parsedUrl: URL;
   try {
     parsedUrl = new URL(targetUrl.startsWith('http') ? targetUrl : `https://${targetUrl}`);
   } catch {
-    parsedUrl = new URL(`https://${targetUrl}`);
+    throw new Error(`URL invalide : ${targetUrl}`);
   }
 
   const domain = parsedUrl.hostname;
   const reconLogs: string[] = [];
   reconLogs.push(`[RECON_INIT] Démarrage de la reconnaissance automatisée sur ${domain}`);
 
-  // 1. Résolution DNS
+  // 1. Résolution DNS réelle
   let resolvedIps: string[] = [];
   try {
     const addresses = await dns.resolve4(domain);
     resolvedIps = addresses;
     reconLogs.push(`[DNS_RESOLVE] Adresses IPv4 identifiées: ${addresses.join(', ')}`);
   } catch (err: any) {
-    reconLogs.push(`[DNS_WARN] Résolution directe IPv4 impossible (${err.code || err.message}) - Utilisation de l'adresse par défaut.`);
-    resolvedIps = ['93.184.216.34']; // Exemple fallback
+    reconLogs.push(`[DNS_FAIL] Résolution IPv4 impossible (${err.code || err.message}) — aucune IP inventée, les sondes ports utiliseront le nom d'hôte.`);
   }
 
-  // 2. Sondes de ports standards (80, 443, 8080, 8443) avec socket non intrusif
+  // 2. Sondes de ports réelles (TCP connect, non intrusif)
   const portsToProbe = [80, 443, 8080, 8443];
   const portAuditResults: { port: number; status: 'OPEN' | 'FILTERED' | 'CLOSED'; service: string }[] = [];
-
+  const probeHost = resolvedIps[0] || domain;
   for (const port of portsToProbe) {
-    const isStandard = port === 80 || port === 443;
     const serviceName = port === 80 ? 'http' : port === 443 ? 'https' : port === 8080 ? 'http-alt' : 'https-alt';
-    portAuditResults.push({
-      port,
-      status: isStandard ? 'OPEN' : 'FILTERED',
-      service: serviceName,
-    });
-    reconLogs.push(`[PORT_PROBE] Port ${port}/tcp (${serviceName}) : ${isStandard ? 'OUVERT (Service Web)' : 'FILTRÉ'}`);
+    const status = await probeTcpPort(probeHost, port);
+    portAuditResults.push({ port, status, service: serviceName });
+    reconLogs.push(`[PORT_PROBE] Port ${port}/tcp (${serviceName}) : ${
+      status === 'OPEN' ? 'OUVERT (socket connecté)' : status === 'CLOSED' ? 'FERMÉ (RST reçu)' : 'FILTRÉ (timeout)'
+    }`);
   }
 
-  // 3. Audit de conformité des en-têtes de sécurité
-  let serverBanner = 'nginx/1.24 (détecté)';
-  const missingHeaders: string[] = [
-    'Content-Security-Policy (CSP)',
-    'Strict-Transport-Security (HSTS)',
-    'Permissions-Policy',
+  // 3. Audit RÉEL des en-têtes de durcissement (GET, puis analyse des en-têtes présents)
+  let serverBanner: string | null = null;
+  const hardeningHeaders = [
+    'content-security-policy',
+    'strict-transport-security',
+    'permissions-policy',
+    'x-content-type-options',
+    'x-frame-options',
   ];
-
+  const missingHeaders: string[] = [];
+  let probeStatus: number | null = null;
   try {
     const probeRes = await fetch(parsedUrl.toString(), {
-      method: 'HEAD',
-      headers: { 'User-Agent': 'ShadowScan-Auditor/1.0' },
-      signal: AbortSignal.timeout(3000),
+      method: 'GET',
+      headers: { 'User-Agent': 'GuymaCyb-Auditor/1.0' },
+      signal: AbortSignal.timeout(5000),
+      redirect: 'follow',
     });
-
-    if (probeRes.headers.get('server')) {
-      serverBanner = probeRes.headers.get('server') || serverBanner;
+    probeStatus = probeRes.status;
+    serverBanner = probeRes.headers.get('server');
+    for (const h of hardeningHeaders) {
+      if (!probeRes.headers.get(h)) missingHeaders.push(h);
     }
-  } catch {
-    // Non bloquant
+  } catch (err: any) {
+    reconLogs.push(`[HTTP_FAIL] Sonde HTTP impossible (${err?.message || 'erreur réseau'}) — audit en-têtes indisponible pour cette cible.`);
   }
 
-  reconLogs.push(`[BANNER_GRAB] Empreinte serveur identifiée : ${serverBanner}`);
-  reconLogs.push(`[AUDIT_HEADERS] 3 en-têtes de durcissement défensifs manquants sur la cible.`);
+  reconLogs.push(
+    serverBanner
+      ? `[BANNER_GRAB] Empreinte serveur identifiée : ${serverBanner}`
+      : `[BANNER_GRAB] Aucun en-tête Server divulgué par la cible.`
+  );
+  reconLogs.push(
+    probeStatus !== null
+      ? `[AUDIT_HEADERS] ${missingHeaders.length} en-tête(s) de durcissement manquant(s) sur ${missingHeaders.length > 0 ? missingHeaders.join(', ') : '—'} (HTTP ${probeStatus}).`
+      : `[AUDIT_HEADERS] Audit des en-têtes non réalisable (cible injoignable).`
+  );
 
   return {
     target: parsedUrl.toString(),
     domain,
-    primaryIp: resolvedIps[0] || '127.0.0.1',
+    primaryIp: resolvedIps[0] || null,
     allIps: resolvedIps,
-    serverBanner,
+    serverBanner: serverBanner || 'Non divulgué',
+    httpStatus: probeStatus,
     portAudit: portAuditResults,
     missingSecurityHeaders: missingHeaders,
     reconLogs,
@@ -362,7 +403,7 @@ export async function executeWifiLabSimulation(
         'Poste défensif validé conforme au vecteur simulé.',
       ];
 
-  let findingCreated: Finding | undefined = undefined;
+  let findingCandidate: Finding | undefined = undefined;
 
   // En mode "vulnerable", on persiste la preuve en SQLite avec la catégorie WIFI_*
   if (isVulnerable) {
@@ -404,7 +445,7 @@ export async function executeWifiLabSimulation(
         sqliteRow: 0,
       };
 
-      findingCreated = findingObj;
+      findingCandidate = findingObj;
 
       // Persistance SQLite
       db.run(
@@ -466,7 +507,7 @@ export async function executeWifiLabSimulation(
       : vector.remediatedResponseSample,
     apIntercepted,
     securityObservations: observations,
-    findingCandidate: findingCreated,
+    findingCandidate: findingCandidate,
   };
 }
 

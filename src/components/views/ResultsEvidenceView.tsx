@@ -1,4 +1,4 @@
-import React, { useState } from 'react';
+import React, { useState, useEffect } from 'react';
 import { Finding, Severity } from '../../types';
 
 interface ResultsEvidenceViewProps {
@@ -10,15 +10,29 @@ export const ResultsEvidenceView: React.FC<ResultsEvidenceViewProps> = ({
   findings,
   onGoToReport,
 }) => {
-  const [selectedFinding, setSelectedFinding] = useState<Finding>(findings[0]);
+  const [selectedFinding, setSelectedFinding] = useState<Finding | null>(findings[0] ?? null);
   const [severityFilter, setSeverityFilter] = useState<'ALL' | Severity>('ALL');
   const [isRetesting, setIsRetesting] = useState<boolean>(false);
   const [retestMessage, setRetestMessage] = useState<string | null>(null);
+
+  // Resynchronise l'inspecteur quand la liste change (nouveau scan, preuve lab…)
+  // — évite le crash `selectedFinding.id` sur une liste vide et les affichages
+  // d'un finding disparu de la liste.
+  useEffect(() => {
+    if (!findings.some((f) => f.id === selectedFinding?.id)) {
+      setSelectedFinding(findings[0] ?? null);
+    }
+  }, [findings]);
 
   const filteredFindings = findings.filter((f) => {
     if (severityFilter === 'ALL') return true;
     return f.severity === severityFilter;
   });
+
+  const highCount = findings.filter((f) => f.severity === 'HIGH').length;
+  const mediumCount = findings.filter((f) => f.severity === 'MEDIUM').length;
+  const lowCount = findings.filter((f) => f.severity === 'LOW').length;
+  const criticalCount = findings.filter((f) => f.severity === 'CRITICAL').length;
 
   const handleRetest = () => {
     setIsRetesting(true);
@@ -111,7 +125,7 @@ export const ResultsEvidenceView: React.FC<ResultsEvidenceViewProps> = ({
               : 'bg-[#171b26] border-[#24314c] text-[#8c909f] hover:text-[#dfe2f1]'
           }`}
         >
-          Élevé (3)
+          Élevé ({highCount + criticalCount})
         </button>
         <button
           type="button"
@@ -122,7 +136,7 @@ export const ResultsEvidenceView: React.FC<ResultsEvidenceViewProps> = ({
               : 'bg-[#171b26] border-[#24314c] text-[#8c909f] hover:text-[#dfe2f1]'
           }`}
         >
-          Moyen (7)
+          Moyen ({mediumCount})
         </button>
         <button
           type="button"
@@ -133,7 +147,7 @@ export const ResultsEvidenceView: React.FC<ResultsEvidenceViewProps> = ({
               : 'bg-[#171b26] border-[#24314c] text-[#8c909f] hover:text-[#dfe2f1]'
           }`}
         >
-          Faible (11)
+          Faible ({lowCount})
         </button>
       </div>
 
@@ -152,7 +166,7 @@ export const ResultsEvidenceView: React.FC<ResultsEvidenceViewProps> = ({
 
           <div className="flex-1 overflow-y-auto p-2.5 flex flex-col gap-2 font-mono text-xs">
             {filteredFindings.map((finding) => {
-              const isSelected = selectedFinding.id === finding.id;
+              const isSelected = selectedFinding?.id === finding.id;
               return (
                 <div
                   key={finding.id}
@@ -206,6 +220,12 @@ export const ResultsEvidenceView: React.FC<ResultsEvidenceViewProps> = ({
 
         {/* Right: Detailed Inspector Pane */}
         <div className="lg:col-span-7 bg-[#171b26] border border-[#24314c] rounded-lg flex flex-col overflow-hidden">
+          {!selectedFinding ? (
+            <div className="flex-1 flex items-center justify-center text-[#8c909f] font-mono text-xs">
+              Sélectionnez une vulnérabilité dans la liste pour inspecter ses preuves.
+            </div>
+          ) : (
+          <>
           <div className="p-4 bg-[#0a0e18] border-b border-[#24314c] flex flex-wrap items-center justify-between gap-3">
             <div>
               <div className="flex items-center gap-2">
@@ -319,13 +339,15 @@ export const ResultsEvidenceView: React.FC<ResultsEvidenceViewProps> = ({
               <div className="bg-[#0a0e18] p-3 rounded border border-[#24314c] flex flex-col gap-1.5">
                 <span className="text-[#10b981] font-bold">{selectedFinding.remediationTitle}</span>
                 <ul className="list-disc list-inside text-[#c2c6d6] flex flex-col gap-1 text-[11px]">
-                  {selectedFinding.remediationSteps.map((step, idx) => (
+                  {(selectedFinding.remediationSteps || []).map((step, idx) => (
                     <li key={idx}>{step}</li>
                   ))}
                 </ul>
               </div>
             </div>
           </div>
+          </>
+          )}
         </div>
       </div>
     </div>

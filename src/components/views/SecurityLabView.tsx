@@ -119,9 +119,12 @@ export const SecurityLabView: React.FC<SecurityLabViewProps> = ({
 
       if (res.ok) {
         showToast('Laboratoire complet exécuté ! Tous les résultats ont été persistés dans SQLite.');
+      } else {
+        const errData = await res.json().catch(() => ({ error: 'Erreur inconnue' }));
+        showToast(`Échec de la suite complète : ${errData.error || `HTTP ${res.status}`}`);
       }
-    } catch {
-      showToast('Simulation de la suite complète terminée avec succès.');
+    } catch (err: any) {
+      showToast(`Échec de la suite complète : ${err?.message || 'API injoignable'}`);
     } finally {
       setIsBatchRunning(false);
     }
@@ -156,7 +159,7 @@ export const SecurityLabView: React.FC<SecurityLabViewProps> = ({
               </span>
             </div>
             <p className="text-[#8c909f] text-[11px] mt-0.5">
-              Simulez et observez les 10 vecteurs d'attaque critiques du Web (OWASP Top 10) en comparant la cible vulnérable et la cible protégée.
+              Simulez et observez les 8 vecteurs d'attaque critiques du Web (OWASP) en comparant la cible vulnérable et la cible protégée.
             </p>
           </div>
         </div>
@@ -172,7 +175,7 @@ export const SecurityLabView: React.FC<SecurityLabViewProps> = ({
             <span className={`material-symbols-outlined text-[16px] ${isBatchRunning ? 'animate-spin' : ''}`}>
               {isBatchRunning ? 'sync' : 'auto_mode'}
             </span>
-            <span>{isBatchRunning ? 'Audit global en cours...' : 'Exécuter la Suite Complète (10)'}</span>
+            <span>{isBatchRunning ? 'Audit global en cours...' : 'Exécuter la Suite Complète (8)'}</span>
           </button>
 
           <button

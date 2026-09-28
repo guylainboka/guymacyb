@@ -958,3 +958,26 @@ Stage Summary:
 - Module Terminal supporte bash (Termux-like)/PowerShell/CMD/Python avec exécution RÉELLE.
 - Aucune erreur console, tous endpoints OK.
 - Ce qui reste pour "tout tourne OK" : (1) installer les ~24 outils Linux manquants via le wizard/Core Manager (apt dans WSL) ; (2) brancher une clé WiFi USB mode monitor pour les 7 scripts WiFi ; (3) clé WIGLE_API_KEY pour GeoMac coords réels ; (4) compiler le noyau Rust (optionnel — fallback Node réel fonctionne) ; (5) tester le wizard Electron sur VM Windows fraîche.
+
+---
+Task ID: DEBUG-1
+Agent: main (Z.ai Code)
+Task: Session debug complet — wizard WSL non bloquant (détection + proposition, jamais d'installation forcée), correction de tous les bugs frontend/backend, durcissement du backend, smoke tests.
+
+Work Log:
+- tsconfig.json : exclusion de skills/ (18 erreurs TS parasites), include explicite src/+server.ts.
+- src/server/db.ts : fix crash ESM `__dirname is not defined` (MODULE_DIR via import.meta.url fallback) ; locateFile wasm multi-candidats (dist-server/, node_modules/, cwd) ; chemin DB surchargeable via GCYB_DB_PATH.
+- desktop/electron-main.cjs : GCYB_DB_PATH → userData (évite l'écriture dans Program Files) ; fix commande `wsl --install` contradictoire (--no-distribution + -d simultanés) ; IPC contrôles fenêtre (minimize/maximize/close/is-fullscreen) + preload main-preload.cjs branché sur la fenêtre principale.
+- desktop/setup-wizard.html : étape WSL non bloquante — si WSL installé → auto-passage à l'étape 3 ; sinon panneau de PROPOSITION (bouton installer user-initiated + lien doc Microsoft + Revérifier + Continuer sans WSL). Suivant toujours actif.
+- src/server/securityLab.ts : fix INSERT audit_logs (colonnes event_type/message/metadata_json inexistantes → les preuves lab n'étaient jamais persistées sur disque) ; renommage findingCreated → findingCandidate (contrat frontend) ; runAutomatedReconSuite 100% réelle (vrais sondes TCP net.Socket, vrais en-têtes via GET, plus d'IP/bannière/ports inventés).
+- src/server/toolbridge.ts : getCoreStatus — wsl.available reflète la détection réelle (test de démarrage distro) ; installToolsViaApt via `wsl -u root` (plus de sudo interactif cassé) ; confidence 0.9 → 90 (échelle 0-100).
+- server.ts : PORT/HOST depuis env (Electron compatible) ; écoute 127.0.0.1 par défaut (plus de 0.0.0.0) ; disable x-powered-by + headers sécurité ; 404 JSON /api/* avant intégration Vite ; gestionnaire d'erreurs global (JSON malformé → 400 propre) ; arrêt gracieux SIGINT/SIGTERM avec sauvegarde SQLite ; uncaughtException/unhandledRejection ; threads = os.cpus().length.
+- Frontend : App.tsx (plus de faux succès sur échec de scan, AbortController) ; ScannerReconView (plus de faux rapport recon en catch, res.ok, guards portAudit) ; SecurityLabView/LaboratoireWifiView (res.ok, toasts d'erreur, guards) ; WifiReseauView (champ fantôme crackCap → capFile && handshakeFound, res.ok) ; ResultsEvidenceView (selectedFinding null-safe + resync, compteurs sévérité réels) ; Header (inputUrl resynchronisé, boutons fenêtre réels via preload, listener fullscreenchange) ; Sidebar (Port 3000) ; CoursNotionsView (état d'erreur affiché) ; ActiveTestsView (progression remise à zéro) ; ReseauLocalView/ArsenalView (totalCount, champs fantômes supprimés) ; libellés "10 vecteurs" → 8.
+- vite.config.ts : optimizeDeps.entries restreint (fin du scan parasite du dossier skills/), watcher ignore skills/, proxy /api pour `vite preview`.
+- Smoke tests passés : health, 404 JSON, lab simulate (findingCandidate OK), lab report (8 vecteurs persistés), findings (9), dashboard stats, recon avancée réelle (example.com : IP réelles, ports réels, headers réels), wifi lab simulate, JSON malformé → 400, bundle prod CJS (health + static OK), SIGTERM → arrêt gracieux + sauvegarde DB.
+
+Stage Summary:
+- 0 erreur TypeScript ; build Vite OK ; bundle server.cjs OK en prod.
+- Wizard WSL conforme à la demande : détection seule, proposition si absent, jamais bloquant.
+- Backend durci (sécurité, erreurs, shutdown, DB userData) — aucun conflit frontend/backend restant (contrat findingCandidate aligné).
+- Doctrine "zéro simulation" restaurée dans la recon avancée et les gestionnaires d'échec frontend.

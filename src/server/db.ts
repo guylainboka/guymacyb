@@ -1,8 +1,21 @@
 import initSqlJs, { Database } from 'sql.js';
 import fs from 'fs';
 import path from 'path';
+import { fileURLToPath } from 'url';
 
-const DB_FILE_PATH = path.resolve(process.cwd(), 'shadow_core.db');
+// Compatible ESM (tsx dev) ET CJS (bundle esbuild server.cjs) :
+// en ESM __dirname n'existe pas, en CJS import.meta.url est shimé par esbuild.
+const MODULE_DIR: string =
+  typeof __dirname !== 'undefined'
+    ? __dirname
+    : path.dirname(fileURLToPath(import.meta.url));
+
+// Le chemin de la base est surchargeable via GCYB_DB_PATH (Electron le pointe
+// vers userData/ pour éviter toute écriture dans Program Files, qui échoue
+// sans droits admin). Défaut : cwd (dev/sandbox).
+const DB_FILE_PATH = process.env.GCYB_DB_PATH
+  ? path.resolve(process.env.GCYB_DB_PATH)
+  : path.resolve(process.cwd(), 'shadow_core.db');
 
 let dbInstance: Database | null = null;
 
@@ -11,13 +24,26 @@ export async function getDatabase(): Promise<Database> {
     return dbInstance;
   }
 
-  // sql.js ne trouve PAS sql-wasm.wasm par défaut via __dirname (contrairement à
-  // ce que dit la doc) — il cherche dans process.cwd(). En production (Electron),
-  // le serveur tourne avec cwd=resources/ mais le wasm est à resources/dist-server/.
-  // On fournit donc locateFile qui pointe explicitement vers __dirname (le dossier
-  // du bundle server.cjs = dist-server/, où le wasm est copié par build-server-bundle).
+  // sql.js ne trouve PAS sql-wasm.wasm par défaut (contrairement à ce que dit la
+  // doc) — il cherche dans process.cwd(). On fournit locateFile qui essaie, dans
+  // l'ordre :
+  //   1. le dossier du bundle server.cjs (dist-server/ en prod Electron),
+  //   2. node_modules/sql.js/dist/ relatif au cwd (dev tsx) et au module,
+  //   3. le nom brut (sql.js retombe alors sur sa résolution par défaut).
   const SQL = await initSqlJs({
-    locateFile: (file: string) => path.join(__dirname, file),
+    locateFile: (file: string) => {
+      const candidates = [
+        path.join(MODULE_DIR, file),
+        path.resolve(process.cwd(), 'node_modules/sql.js/dist', file),
+        path.resolve(MODULE_DIR, '../../node_modules/sql.js/dist', file),
+      ];
+      for (const c of candidates) {
+        try {
+          if (fs.existsSync(c)) return c;
+        } catch { /* ignore */ }
+      }
+      return file;
+    },
   });
 
   if (fs.existsSync(DB_FILE_PATH)) {
@@ -134,4 +160,9 @@ export function saveDatabaseToDisk(db?: Database) {
 
 export function getDbFilePath(): string {
   return DB_FILE_PATH;
+}
+
+/** Chemin du dossier du module (utile pour localiser des ressources adjacentes). */
+export function getModuleDir(): string {
+  return MODULE_DIR;
 }

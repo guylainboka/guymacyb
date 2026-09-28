@@ -33,14 +33,24 @@ export const LaboratoireWifiView: React.FC<LaboratoireWifiViewProps> = ({
   const [toast, setToast] = useState<string | null>(null);
 
   useEffect(() => {
+    let cancelled = false;
     fetch('/api/wifi/lab/vectors')
-      .then((r) => r.json())
+      .then((r) => {
+        if (!r.ok) throw new Error(`HTTP ${r.status}`);
+        return r.json();
+      })
       .then((data) => {
+        if (cancelled) return;
         setVectors(Array.isArray(data) ? data : []);
-        if (data.length > 0) setSelected(data[0]);
+        if (Array.isArray(data) && data.length > 0) setSelected(data[0]);
         setLoading(false);
       })
-      .catch(() => setLoading(false));
+      .catch(() => {
+        if (!cancelled) setLoading(false);
+      });
+    return () => {
+      cancelled = true;
+    };
   }, []);
 
   const showToast = (m: string) => { setToast(m); setTimeout(() => setToast(null), 3500); };
@@ -57,6 +67,10 @@ export const LaboratoireWifiView: React.FC<LaboratoireWifiViewProps> = ({
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({ vectorId: selected.id, targetMode: mode, operatorId: 'SEC-OPS-0982' }),
       });
+      if (!res.ok) {
+        const errData = await res.json().catch(() => ({ error: 'Erreur inconnue' }));
+        throw new Error(errData.error || `HTTP ${res.status}`);
+      }
       const data = await res.json();
       setSimResult(data);
       if (data.findingCandidate) {
@@ -65,8 +79,8 @@ export const LaboratoireWifiView: React.FC<LaboratoireWifiViewProps> = ({
       } else {
         showToast(data.status === 'PROTECTED' ? 'Poste défensif validé ✓' : 'Simulation terminée');
       }
-    } catch {
-      showToast('Erreur API simulation');
+    } catch (err: any) {
+      showToast(`Erreur simulation : ${err?.message || 'API injoignable'}`);
     } finally {
       setIsSimulating(false);
     }
@@ -80,11 +94,16 @@ export const LaboratoireWifiView: React.FC<LaboratoireWifiViewProps> = ({
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({ operatorId: 'SEC-OPS-0982' }),
       });
+      if (!res.ok) {
+        const errData = await res.json().catch(() => ({ error: 'Erreur inconnue' }));
+        showToast(`Erreur génération rapport : ${errData.error || `HTTP ${res.status}`}`);
+        return;
+      }
       const data = await res.json();
       showToast(`Rapport généré : ${data.vectorsAudited || 0} vecteurs audités et persistés`);
       onGoToResults();
-    } catch {
-      showToast('Erreur génération rapport');
+    } catch (err: any) {
+      showToast(`Erreur génération rapport : ${err?.message || 'API injoignable'}`);
     } finally {
       setIsBatchRunning(false);
     }
@@ -289,7 +308,7 @@ export const LaboratoireWifiView: React.FC<LaboratoireWifiViewProps> = ({
                           </div>
                           <pre className="text-[11px] font-mono text-[#c2c6d6] whitespace-pre-wrap bg-[#0a0e18] border border-[#24314c] rounded p-2 mb-2 max-h-40 overflow-y-auto">{simResult.responsePreview}</pre>
                           <ul className="space-y-1">
-                            {simResult.securityObservations.map((o, i) => (
+                            {simResult.securityObservations?.map((o, i) => (
                               <li key={i} className="text-xs text-[#c2c6d6] flex items-start gap-2">
                                 <span className="text-sky-400 mt-0.5">▸</span>
                                 <span>{o}</span>

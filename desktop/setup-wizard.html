@@ -156,24 +156,35 @@
     </div>
   </div>
 
-  <!-- Étape 2 : WSL -->
+  <!-- Étape 2 : WSL — détection uniquement. Si WSL est déjà installé, on passe
+       automatiquement à l'étape suivante. Sinon, on PROPOSE l'installation
+       (jamais imposée : l'utilisateur peut continuer sans WSL). -->
   <div class="step-content" id="step-2">
     <h1>Étape 2 — WSL (Windows Subsystem for Linux)</h1>
-    <p>WSL est requis pour exécuter les outils Linux de sécurité. C'est une fonctionnalité Windows gratuite.</p>
+    <p>Guyma Cyb vérifie si WSL est déjà installé sur votre machine. Les scans de base (HTTP, ports, DNS, TLS, réseau local) fonctionnent SANS WSL via le moteur Node intégré.</p>
     <div class="card">
       <div class="row">
         <div class="status-line">
           <span class="dot idle" id="wsl-dot"></span>
-          <span id="wsl-status">Détection de WSL…</span>
+          <span id="wsl-status">Vérification de WSL…</span>
           <span class="badge" id="wsl-badge">en cours</span>
         </div>
-        <button class="btn primary" id="wsl-install-btn" onclick="installWsl()" disabled>
+        <button class="btn primary" id="wsl-install-btn" onclick="installWsl()" disabled style="display:none">
           <span class="material-symbols-outlined">download</span>Installer WSL
         </button>
       </div>
+      <!-- Proposition d'installation (affichée UNIQUEMENT si WSL est absent) -->
+      <div id="wsl-proposal" style="display:none; margin-top:14px; padding:14px; background:var(--panel2); border:1px solid var(--border); border-radius:8px">
+        <div class="status-line" style="margin-bottom:8px"><span class="material-symbols-outlined" style="color:var(--amber)">info</span><strong style="font-size:13px">WSL n'est pas installé — voulez-vous l'installer ?</strong></div>
+        <p style="margin-bottom:10px">L'installation est proposée, jamais imposée. Cliquez sur le bouton ci-dessus pour lancer l'installation officielle Microsoft (fenêtre UAC — droits administrateur requis, un redémarrage peut être demandé), ou installez-le vous-même via la <a href="https://learn.microsoft.com/fr-fr/windows/wsl/install" style="color:var(--primary)" onclick="window.guymacybSetup && window.guymacybSetup.openExternal && window.guymacybSetup.openExternal('https://learn.microsoft.com/fr-fr/windows/wsl/install') && event.preventDefault()">documentation officielle</a>, puis relancez la vérification.</p>
+        <div class="row" style="gap:10px; justify-content:flex-start">
+          <button class="btn" onclick="detectWsl()"><span class="material-symbols-outlined">refresh</span>Revérifier</button>
+          <button class="btn" onclick="goToStep(3)">Continuer sans WSL<span class="material-symbols-outlined">arrow_forward</span></button>
+        </div>
+      </div>
       <div class="log" id="wsl-log" style="display:none"></div>
     </div>
-    <p class="note">Note : l'installation de WSL nécessite les droits administrateur (UAC). Une fenêtre Windows vous demandera confirmation. Après installation, un redémarrage peut être requis.</p>
+    <p class="note">Guyma Cyb n'installe jamais WSL de lui-même : l'installation n'est lancée que si vous cliquez sur « Installer WSL ».</p>
     <div class="row" style="justify-content:flex-start; gap:10px; margin-top:16px">
       <button class="btn primary" id="step2-next" onclick="goToStep(3)" disabled>Suivant<span class="material-symbols-outlined">arrow_forward</span></button>
       <button class="btn" onclick="goToStep(1)">Retour</button>
@@ -246,7 +257,8 @@ function setStep(n) {
     if (i === n) pill.classList.add('active');
   }
 }
-function goToStep(n) { setStep(n); if (n === 2) detectWsl(); if (n === 3) detectTools(); if (n === 4) buildSummary(); }
+let currentStep = 1;
+function goToStep(n) { currentStep = n; setStep(n); if (n === 2) detectWsl(); if (n === 3) detectTools(); if (n === 4) buildSummary(); }
 function setDot(id, state) {
   const el = document.getElementById(id);
   if (!el) return;
@@ -268,41 +280,52 @@ function appendLog(id, line, cls) {
 function setSpinner(on) { document.getElementById('global-spinner').style.display = on ? 'flex' : 'none'; }
 function setFooterNote(t) { document.getElementById('footer-note').textContent = t; }
 
-// ---- Étape 2 : WSL ----
+// ---- Étape 2 : WSL — détection + proposition (jamais bloquant) ----
+let wslAutoAdvanced = false;
 async function detectWsl() {
   setDot('wsl-dot', 'idle');
-  document.getElementById('wsl-status').textContent = 'Détection de WSL…';
+  document.getElementById('wsl-status').textContent = 'Vérification de WSL…';
   setBadge('wsl-badge', 'en cours', 'info');
-  document.getElementById('wsl-install-btn').disabled = true;
+  document.getElementById('wsl-install-btn').style.display = 'none';
+  document.getElementById('wsl-proposal').style.display = 'none';
   document.getElementById('step2-next').disabled = true;
-  setFooterNote('Détection de WSL…');
+  setFooterNote('Vérification de WSL…');
   try {
     const r = await window.guymacybSetup.detectAll();
     detected = r;
+    document.getElementById('step2-next').disabled = false; // jamais bloquant
     if (r.wsl && r.wsl.available) {
+      // WSL déjà installé → on passe automatiquement à la suite.
       setDot('wsl-dot', 'ok');
-      document.getElementById('wsl-status').textContent = 'WSL installé' + (r.wsl.defaultDistro ? ' — distro : ' + r.wsl.defaultDistro : '');
+      document.getElementById('wsl-status').textContent = 'WSL est déjà installé' + (r.wsl.defaultDistro ? ' — distro : ' + r.wsl.defaultDistro : '') + ' — passage à l\'étape suivante…';
       setBadge('wsl-badge', 'OK', 'ok');
-      document.getElementById('wsl-install-btn').style.display = 'none';
-      document.getElementById('step2-next').disabled = false;
-      setFooterNote('WSL prêt — passez à l\'étape suivante');
+      setFooterNote('WSL déjà installé — on continue');
+      if (!wslAutoAdvanced) {
+        wslAutoAdvanced = true;
+        setTimeout(() => { if (currentStep === 2) goToStep(3); }, 900);
+      }
     } else if (r.isWindows) {
+      // WSL absent → PROPOSITION d'installation (pas d'installation automatique).
       setDot('wsl-dot', 'warn');
-      document.getElementById('wsl-status').textContent = 'WSL non détecté — installation requise';
-      setBadge('wsl-badge', 'Requis', 'warn');
+      document.getElementById('wsl-status').textContent = r.wsl && r.wsl.reason ? r.wsl.reason : 'WSL non détecté sur cette machine';
+      setBadge('wsl-badge', 'Non installé', 'warn');
+      document.getElementById('wsl-proposal').style.display = 'block';
+      document.getElementById('wsl-install-btn').style.display = 'inline-flex';
       document.getElementById('wsl-install-btn').disabled = false;
-      setFooterNote('Cliquez sur "Installer WSL" (droits admin requis)');
+      setFooterNote('WSL non installé — installez-le (proposé) ou continuez sans');
     } else {
       setDot('wsl-dot', 'ok');
-      document.getElementById('wsl-status').textContent = 'Mode Linux natif — WSL non requis (outils directs)';
+      document.getElementById('wsl-status').textContent = 'Mode Linux natif — WSL non requis (outils exécutés directement)';
       setBadge('wsl-badge', 'Natif', 'ok');
-      document.getElementById('wsl-install-btn').style.display = 'none';
-      document.getElementById('step2-next').disabled = false;
       setFooterNote('Linux natif détecté — WSL inutile');
+      if (!wslAutoAdvanced) {
+        wslAutoAdvanced = true;
+        setTimeout(() => { if (currentStep === 2) goToStep(3); }, 900);
+      }
     }
   } catch (e) {
     setDot('wsl-dot', 'err');
-    document.getElementById('wsl-status').textContent = 'Erreur de détection : ' + e.message;
+    document.getElementById('wsl-status').textContent = 'Erreur de vérification : ' + e.message;
     setBadge('wsl-badge', 'Erreur', 'warn');
     document.getElementById('step2-next').disabled = false;
   }

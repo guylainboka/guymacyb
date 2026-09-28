@@ -64,11 +64,12 @@ export default function App() {
 
   // Load real historical targets and findings from SQLite on mount
   React.useEffect(() => {
+    const ac = new AbortController();
     async function loadSqliteData() {
       try {
         const [targetsRes, findingsRes] = await Promise.all([
-          fetch('/api/targets'),
-          fetch('/api/findings'),
+          fetch('/api/targets', { signal: ac.signal }),
+          fetch('/api/findings', { signal: ac.signal }),
         ]);
         if (targetsRes.ok) {
           const targetsData = await targetsRes.json();
@@ -82,11 +83,13 @@ export default function App() {
             setFindings(findingsData);
           }
         }
-      } catch (err) {
+      } catch (err: any) {
+        if (err?.name === 'AbortError') return; // composant démonté — ignore
         console.warn('Backend SQLite not yet queried, using default in-memory dataset:', err);
       }
     }
     loadSqliteData();
+    return () => ac.abort();
   }, []);
 
   // Start real passive/semi-active analysis on the server
@@ -150,10 +153,13 @@ export default function App() {
       setIsAnalyzing(false);
       setCurrentView('analyse-web');
     } catch (err: any) {
-      console.warn('Real scan request fallback to simulation:', err);
+      // Doctrine "zéro simulation" : un échec d'analyse doit être affiché comme
+      // tel. L'ancien code affichait un faux succès ("Cartographie terminée •
+      // 137 endpoints") même sur erreur backend — contre-productif pour un
+      // outil de sécurité.
+      console.error('Échec de l\'analyse réseau réelle:', err);
       setIsAnalyzing(false);
-      setEngineStatus(`Cartographie terminée • 137 endpoints qualifiés`);
-      setCurrentView('analyse-web');
+      setEngineStatus(`Échec de l'analyse : ${err?.message || 'erreur réseau'} — vérifiez la cible et le moteur backend`);
     }
   };
 

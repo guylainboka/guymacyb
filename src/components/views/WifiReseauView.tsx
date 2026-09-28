@@ -56,6 +56,7 @@ export const WifiReseauView: React.FC<WifiReseauViewProps> = ({ onGoToLab, onGoT
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({ interface: iface }),
       });
+      if (!res.ok) throw new Error(`HTTP ${res.status}`);
       const data = await res.json();
       setScanResult(data);
     } catch (e) {
@@ -76,6 +77,7 @@ export const WifiReseauView: React.FC<WifiReseauViewProps> = ({ onGoToLab, onGoT
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({ target, interface: auditIface }),
       });
+      if (!res.ok) throw new Error(`HTTP ${res.status}`);
       const data = await res.json();
       setAuditResult(data);
       setAuditTarget(target);
@@ -95,6 +97,7 @@ export const WifiReseauView: React.FC<WifiReseauViewProps> = ({ onGoToLab, onGoT
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({ interface: deauthIface, duration: deauthDuration }),
       });
+      if (!res.ok) throw new Error(`HTTP ${res.status}`);
       const data = await res.json();
       setDeauthResult(data);
     } catch (e) {
@@ -686,7 +689,7 @@ export const WifiReseauView: React.FC<WifiReseauViewProps> = ({ onGoToLab, onGoT
                     </div>
                     {hsResult.capFile && <div className="text-[10px] text-[#8c909f]">Cap: {hsResult.capFile}</div>}
                     <div className="text-[10px] text-[#8c909f]">{hsResult.packetsCaptured} paquets • {hsResult.mode}</div>
-                    {hsResult.crackCap && <button onClick={()=>setCrackCap(hsResult.capFile)} className="mt-1 text-[10px] text-sky-400 underline">→ Cracker ce handshake</button>}
+                    {hsResult.capFile && hsResult.handshakeFound && <button onClick={()=>setCrackCap(hsResult.capFile)} className="mt-1 text-[10px] text-sky-400 underline">→ Cracker ce handshake</button>}
                   </div>
                 )}
               </div>

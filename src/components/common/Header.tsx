@@ -30,6 +30,19 @@ export const Header: React.FC<HeaderProps> = ({
   const [inputUrl, setInputUrl] = useState<string>(targetConfig.url);
   const [isMaximized, setIsMaximized] = useState<boolean>(false);
 
+  // Resynchronise le champ d'édition si la cible change ailleurs (cible
+  // historique sélectionnée dans ScannerReconView, etc.).
+  useEffect(() => {
+    setInputUrl(targetConfig.url);
+  }, [targetConfig.url]);
+
+  // Synchronise l'icône agrandir/restaurer avec l'état réel (ex: sortie via Échap).
+  useEffect(() => {
+    const onFsChange = () => setIsMaximized(!!document.fullscreenElement);
+    document.addEventListener('fullscreenchange', onFsChange);
+    return () => document.removeEventListener('fullscreenchange', onFsChange);
+  }, []);
+
   // Dynamic light telemetry fluctuation to feel like a real native engine
   useEffect(() => {
     const timer = setInterval(() => {
@@ -57,11 +70,36 @@ export const Header: React.FC<HeaderProps> = ({
   };
 
   const toggleMaximize = () => {
-    setIsMaximized(!isMaximized);
+    // Sous Electron : contrôle natif de la fenêtre via le preload dédié.
+    const w = (window as any).guymacybWindow;
+    if (w && typeof w.maximize === 'function') {
+      w.maximize().then((nowMax: boolean | undefined) => {
+        if (typeof nowMax === 'boolean') setIsMaximized(nowMax);
+      }).catch(() => {});
+      return;
+    }
+    // Fallback web : API Fullscreen du navigateur.
+    setIsMaximized(!document.fullscreenElement);
     if (!document.fullscreenElement) {
       document.documentElement.requestFullscreen().catch(() => {});
     } else {
       document.exitFullscreen().catch(() => {});
+    }
+  };
+
+  const minimizeWindow = () => {
+    const w = (window as any).guymacybWindow;
+    if (w && typeof w.minimize === 'function') w.minimize().catch(() => {});
+  };
+
+  const closeWindow = () => {
+    const w = (window as any).guymacybWindow;
+    if (w && typeof w.close === 'function') {
+      if (confirm('Fermer la session active de Guyma Cyb ?')) w.close();
+      return;
+    }
+    if (confirm('Fermer la session active de Guyma Cyb ?')) {
+      window.location.reload();
     }
   };
 
@@ -86,7 +124,7 @@ export const Header: React.FC<HeaderProps> = ({
             title="Minimiser"
             className="h-full w-9 flex items-center justify-center text-[#c2c6d6] hover:bg-[#1c1f2a] hover:text-white transition-colors"
             type="button"
-            onClick={() => {}}
+            onClick={minimizeWindow}
           >
             <span className="material-symbols-outlined text-[14px]">minimize</span>
           </button>
@@ -104,11 +142,7 @@ export const Header: React.FC<HeaderProps> = ({
             title="Fermer la session"
             className="h-full w-9 flex items-center justify-center text-[#c2c6d6] hover:bg-[#93000a] hover:text-white transition-colors"
             type="button"
-            onClick={() => {
-              if (confirm('Fermer la session active de Guyma Cyb ?')) {
-                window.location.reload();
-              }
-            }}
+            onClick={closeWindow}
           >
             <span className="material-symbols-outlined text-[14px]">close</span>
           </button>
