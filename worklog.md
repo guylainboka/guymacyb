@@ -981,3 +981,29 @@ Stage Summary:
 - Wizard WSL conforme à la demande : détection seule, proposition si absent, jamais bloquant.
 - Backend durci (sécurité, erreurs, shutdown, DB userData) — aucun conflit frontend/backend restant (contrat findingCandidate aligné).
 - Doctrine "zéro simulation" restaurée dans la recon avancée et les gestionnaires d'échec frontend.
+
+---
+Task ID: AUTONOMOUS-INSTALL-1
+Agent: main (Z.ai Code)
+Task: Rendre le logiciel autonome + simple à installer sur n'importe quel Windows 10/11 — corriger le bug du wizard bloquant au premier lancement (conflit de redondance avec CoreManagerView), sans réécrire le projet.
+
+Work Log:
+- Diagnostic : le build GitHub Actions était déjà vert (run 36414439338, 21/21 étapes OK, .exe 108 MB produit). Aucun marqueur de conflit git, aucun TODO/FIXME, repo propre. Le « bug » identifié n'était pas un crash de build mais un bug d'EXPÉRIENCE : le wizard de premier lancement (4 étapes : Bienvenue → WSL → Outils → Terminé) s'affichait systématiquement au premier démarrage et bloquait l'accès à l'app, avec obligation de cliquer à travers les étapes + UAC + reboot potentiel + apt-get de 16 outils. Cela contredisait « autonome + simple sur n'importe quel Win10/11 ».
+- Conflit de redondance identifié : le wizard (`desktop/setup-wizard.html` + `installWslElevated`/`installToolsInWsl` dans `electron-main.cjs`) dupliquait la fonctionnalité d'installation d'outils déjà présente dans `CoreManagerView.tsx` (bouton « Installer les outils manquants » → `/api/core/install-tools`). Seule l'installation WSL avec élévation UAC était unique au wizard.
+- Fix `desktop/electron-main.cjs` :
+  • `shouldShowWizard()` retourne désormais `false` par défaut → l'app démarre DIRECTEMENT en mode lite (moteur Node fallback pour scans HTTP/ports/DNS/TLS/réseau local) sans wizard bloquant. Échappatoire de test/debug via `GCYB_SHOW_SETUP=1`.
+  • Ajout IPC `setup:open-wizard` : ouvre le wizard À LA DEMANDE depuis l'app (Core Manager), sans redémarrer le serveur ni créer une 2e fenêtre principale.
+  • Nouveau flag `wizardOpenedOnDemand` : quand `true`, `setup:launch-app` et `setup:skip` se contentent de fermer le wizard (l'app tourne déjà) au lieu de spawn le serveur + créer la fenêtre principale. Reset dans le handler `closed` du wizard pour éviter tout état collant.
+- Fix `desktop/main-preload.cjs` : exposition de `openSetupWizard()` via `contextBridge` (namespace `window.guymacybWindow`), aux côtés de minimize/maximize/close/isFullscreen.
+- Fix `src/components/views/CoreManagerView.tsx` :
+  • Handler `openSetupWizard()` qui appelle `window.guymacybWindow.openSetupWizard()` (cast `any`, même pattern que `Header.tsx`), avec fallback gracieux si hors desktop.
+  • Bouton « Assistant de configuration » (icône `tune`) dans l'en-tête, groupé avec « Vérifier l'état » dans un `flex gap-2`.
+  • Bouton « Installer WSL (assistant UAC) » dans la zone « WSL non détecté » (remplace le texte statique « Installer via wsl --install dans PowerShell »).
+  • `useEffect` auto-refresh au focus de la fenêtre principale : après que l'utilisateur a installé WSL/outils via le wizard, le statut se rafraîchit automatiquement au retour dans l'app.
+- Vérifications : `node --check desktop/electron-main.cjs` OK ; `node --check desktop/main-preload.cjs` OK ; `npx tsc --noEmit` 0 erreur ; `npx vite build` OK (44 modules, 632 ms) ; `node desktop/build-server-bundle.js` OK (server.cjs 1.4 MB + sql-wasm.wasm 658 KB).
+
+Stage Summary:
+- Le logiciel démarre désormais AUTONOMEMENT sur n'importe quel Windows 10/11 : aucun wizard bloquant, l'app s'ouvre immédiatement en mode lite (scans de base opérationnels sans WSL).
+- L'assistant de configuration est PRÉSERVÉ et accessible à la demande depuis la vue Core Manager (un clic) — il gère l'installation WSL avec élévation UAC + les outils Linux, sans friction au premier lancement.
+- Aucun fichier supprimé, aucune réécriture : 3 fichiers existants modifiés de manière ciblée (electron-main.cjs, main-preload.cjs, CoreManagerView.tsx). Le wizard et tout le backend restent intacts.
+- Build local validé (tsc + vite + bundle). Le push déclenchera le workflow GitHub Actions qui produira le `GuymaCyb-Setup-v1.0.0.exe` (NSIS, x64).

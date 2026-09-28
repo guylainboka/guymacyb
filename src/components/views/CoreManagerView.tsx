@@ -89,6 +89,34 @@ export const CoreManagerView: React.FC = () => {
     }
   };
 
+  // Ouvre l'assistant de configuration (wizard) à la demande : installe WSL
+  // (avec élévation UAC) et les outils Linux manquants. Le wizard tourne dans
+  // une fenêtre séparée — l'app continue de fonctionner. Une fois le wizard
+  // terminé, on rafraîchit le statut pour refléter WSL + outils installés.
+  const openSetupWizard = async () => {
+    try {
+      const w = (window as any).guymacybWindow;
+      if (w && typeof w.openSetupWizard === 'function') {
+        await w.openSetupWizard();
+        // Petit délai puis rafraîchissement (le wizard peut prendre du temps).
+        // On rafraîchit aussi à chaque focus de fenêtre principale ci-dessous.
+        setTimeout(() => void refresh(), 2000);
+      } else {
+        setError('Assistant indisponible hors du logiciel desktop. Lancez « wsl --install » dans PowerShell (admin) puis réessayez.');
+      }
+    } catch (e: any) {
+      setError(e?.message || 'Impossible d\'ouvrir l\'assistant de configuration');
+    }
+  };
+
+  // Rafraîchit automatiquement le statut quand la fenêtre principale regagne
+  // le focus (l'utilisateur a peut-être installé WSL/outils via le wizard).
+  useEffect(() => {
+    const onFocus = () => void refresh();
+    window.addEventListener('focus', onFocus);
+    return () => window.removeEventListener('focus', onFocus);
+  }, [refresh]);
+
   const tools = status?.tools;
   const wsl = status?.wsl;
   // Derived — the API does NOT return `tools.installed`/`tools.total`/`memory.total`/
@@ -116,15 +144,26 @@ export const CoreManagerView: React.FC = () => {
               Statut réel du pont d'exécution Linux, des outils installés et de la stratégie 3-étapes.
             </p>
           </div>
-          <button
-            onClick={refresh}
-            disabled={loading}
-            className="px-3 py-1.5 text-xs rounded bg-[#171b26] border border-[#24314c] hover:border-[#4d8eff]/50 text-[#c2c6d6] flex items-center gap-1.5 transition-colors disabled:opacity-50"
-            type="button"
-          >
-            <span className={`material-symbols-outlined text-[16px] ${loading ? 'animate-spin' : ''}`}>refresh</span>
-            Vérifier l'état
-          </button>
+          <div className="flex items-center gap-2">
+            <button
+              onClick={refresh}
+              disabled={loading}
+              className="px-3 py-1.5 text-xs rounded bg-[#171b26] border border-[#24314c] hover:border-[#4d8eff]/50 text-[#c2c6d6] flex items-center gap-1.5 transition-colors disabled:opacity-50"
+              type="button"
+            >
+              <span className={`material-symbols-outlined text-[16px] ${loading ? 'animate-spin' : ''}`}>refresh</span>
+              Vérifier l'état
+            </button>
+            <button
+              onClick={openSetupWizard}
+              className="px-3 py-1.5 text-xs rounded bg-[#4d8eff]/15 border border-[#4d8eff]/40 hover:bg-[#4d8eff]/25 text-[#4d8eff] flex items-center gap-1.5 transition-colors"
+              type="button"
+              title="Ouvre l'assistant de configuration : installe WSL (avec élévation UAC) et les outils Linux manquants"
+            >
+              <span className="material-symbols-outlined text-[16px]">tune</span>
+              Assistant de configuration
+            </button>
+          </div>
         </div>
 
         {/* Info card — stratégie 3 étapes */}
@@ -256,8 +295,21 @@ export const CoreManagerView: React.FC = () => {
                       </div>
                     </div>
                   ) : (
-                    <div className="px-3 py-2 rounded bg-amber-500/10 border border-amber-500/30 text-amber-400 text-xs font-mono">
-                      WSL non détecté. Installer via <code>wsl --install</code> dans PowerShell (admin).
+                    <div className="space-y-3">
+                      <div className="px-3 py-2 rounded bg-amber-500/10 border border-amber-500/30 text-amber-400 text-xs font-mono">
+                        WSL non détecté. Installation conseillée pour activer les modules WiFi / Arsenal / Terminal avancé.
+                      </div>
+                      <button
+                        onClick={openSetupWizard}
+                        className="px-3 py-1.5 text-xs rounded bg-[#4d8eff]/15 border border-[#4d8eff]/40 hover:bg-[#4d8eff]/25 text-[#4d8eff] flex items-center gap-1.5 transition-colors font-medium"
+                        type="button"
+                      >
+                        <span className="material-symbols-outlined text-[16px]">download</span>
+                        Installer WSL (assistant UAC)
+                      </button>
+                      <div className="text-[11px] text-[#8c909f] font-mono">
+                        Ou manuellement : <code>wsl --install</code> dans PowerShell (admin).
+                      </div>
                     </div>
                   )
                 ) : (

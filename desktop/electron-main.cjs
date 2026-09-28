@@ -526,6 +526,13 @@ ipcMain.handle('setup:launch-app', async (event) => {
   // Fermer la fenêtre wizard
   const win = BrowserWindow.fromWebContents(event.sender);
   if (win) win.close();
+  // Si le wizard a été ouvert à la demande (l'app tourne déjà), on ne
+  // redémarre PAS le serveur ni ne crée une nouvelle fenêtre principale :
+  // le wizard n'a servi qu'à configurer WSL + outils, l'app continue de tourner.
+  if (wizardOpenedOnDemand) {
+    wizardOpenedOnDemand = false;
+    return { ok: true };
+  }
   // Démarrer le serveur + ouvrir la fenêtre principale
   serverProcess = startBackendServer();
   createWindow();
@@ -569,9 +576,30 @@ ipcMain.handle('setup:skip', async (event) => {
   } catch (e) { /* ignore */ }
   const win = BrowserWindow.fromWebContents(event.sender);
   if (win) win.close();
+  // Si le wizard a été ouvert à la demande (l'app tourne déjà), on ne
+  // redémarre PAS le serveur ni ne crée une nouvelle fenêtre principale :
+  // le wizard n'a servi qu'à configurer WSL + outils, l'app continue de tourner.
+  if (wizardOpenedOnDemand) {
+    wizardOpenedOnDemand = false;
+    return { ok: true };
+  }
   serverProcess = startBackendServer();
   createWindow();
   await loadApp();
+  return { ok: true };
+});
+
+// Ouverture du wizard À LA DEMANDE depuis l'application (Core Manager).
+// L'app tourne déjà — on ne touche ni au serveur ni à la fenêtre principale :
+// le wizard sert uniquement à installer/configurer WSL + outils, puis se ferme.
+ipcMain.handle('setup:open-wizard', async () => {
+  if (wizardWindow) {
+    if (wizardWindow.isMinimized()) wizardWindow.restore();
+    wizardWindow.focus();
+    return { ok: true };
+  }
+  wizardOpenedOnDemand = true;
+  createWizardWindow();
   return { ok: true };
 });
 
@@ -580,6 +608,11 @@ ipcMain.handle('setup:skip', async (event) => {
 // ---------------------------------------------------------------------------
 
 let wizardWindow = null;
+// `true` quand le wizard est ouvert à la demande depuis l'app (Core Manager),
+// pas au premier lancement. Dans ce mode, les handlers `setup:launch-app` et
+// `setup:skip` se contentent de fermer le wizard (le serveur + la fenêtre
+// principale tournent déjà — ne pas les recréer).
+let wizardOpenedOnDemand = false;
 
 function createWizardWindow() {
   wizardWindow = new BrowserWindow({
@@ -600,14 +633,31 @@ function createWizardWindow() {
     },
   });
   wizardWindow.loadFile(path.join(__dirname, 'setup-wizard.html'));
-  wizardWindow.on('closed', () => { wizardWindow = null; });
+  wizardWindow.on('closed', () => {
+    wizardWindow = null;
+    // Reset : au prochain open-wizard ou premier lancement, le flag repart à false.
+    wizardOpenedOnDemand = false;
+  });
 }
 
-/** Détermine si le wizard doit s'afficher (premier lancement en production). */
+/** Détermine si le wizard doit s'afficher (premier lancement en production).
+ *
+ *  MODE AUTONOME — le wizard NE s'affiche PLUS automatiquement au premier
+ *  lancement. L'app démarre directement en mode « lite » : le moteur Node
+ *  intégré prend en charge les scans de base (HTTP, ports TCP, DNS, TLS,
+ *  découverte réseau local mDNS/SSDP/NetBIOS) SANS aucune dépendance externe.
+ *
+ *  L'utilisateur peut installer WSL + les outils Linux à la demande, soit :
+ *    - depuis la vue « Core Manager » (bouton « Assistant de configuration »
+ *      qui rouvre ce wizard via l'IPC `setup:open-wizard`),
+ *    - soit en relançant l'app avec la variable d'environnement
+ *      GCYB_SHOW_SETUP=1 (échappatoire de test/debug).
+ *
+ *  Le wizard reste donc accessible — il n'est juste plus bloquant.
+ */
 function shouldShowWizard() {
-  if (IS_DEV) return false; // en dev, on skip
-  if (fs.existsSync(SETUP_DONE_FILE)) return false;
-  return true;
+  if (process.env.GCYB_SHOW_SETUP === '1') return true;
+  return false;
 }
 
 // ---------------------------------------------------------------------------
