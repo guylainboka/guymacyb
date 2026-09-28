@@ -98,14 +98,29 @@ async function main() {
     sourcemap: false,
     legalComments: 'none',
     logLevel: 'info',
-    // `vite` is only used in the dev branch of server.ts (createViteServer middleware).
-    // In production (NODE_ENV=production) that branch is skipped, so we mark vite as
-    // external to avoid bundling ~10MB of dev tooling into the production server.
+    // `vite` est marqué external : il ne sera PAS inliné dans le bundle (il
+    // pèse ~10 MB et n'est utile qu'en dev pour le HMR/middleware Vite).
+    //
+    // IMPORTANT — pourquoi `external: ['vite']` + `define process.env.NODE_ENV`
+    // ne suffisent PAS à eux seuls :
+    //   Si server.ts faisait un `import { createServer } from 'vite'` STATIQUE
+    //   en tête de fichier, esbuild le convertirait en `require('vite')` AU
+    //   TOP-LEVEL du bundle CJS, exécuté au chargement du module — AVANT tout
+    //   check `NODE_ENV === 'production'`. Sur l'app installée, `node_modules/vite`
+    //   n'est pas embarqué dans les resources Electron (volontairement, pour
+    //   la taille), donc le serveur crasherait avec `Cannot find module 'vite'`
+    //   dès le démarrage, même en production.
+    //
+    //   C'est pourquoi server.ts importe `vite` DYNAMIQUEMENT via
+    //   `await import('vite')` à l'intérieur de la branche `!isProd`. esbuild
+    //   génère alors un `require('vite')` paresseux DANS cette branche, qui
+    //   n'est jamais exécuté en production. Le bundle prod n'a donc besoin ni
+    //   de `vite` ni de `node_modules` au runtime — il est autonome.
     external: ['vite'],
     define: {
-      // Force the production branch in server.ts at build time. This helps esbuild's
-      // tree shaker drop the unused vite middleware path; we still need
-      // `external: ['vite']` because the import is static at the top of server.ts.
+      // Force la branche production au build time (aide esbuild à tree-shaker
+      // le code dev-only). Ne suffit PAS à éliminer un import statique de vite
+      // (voir ci-dessus) — d'où l'import dynamique côté server.ts.
       'process.env.NODE_ENV': '"production"',
       // toolbridge.ts uses `import.meta.url` to compute __dirname/__filename, but
       // `import.meta` is unavailable in CJS output (esbuild leaves it empty).

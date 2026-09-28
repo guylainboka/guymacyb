@@ -1007,3 +1007,29 @@ Stage Summary:
 - L'assistant de configuration est PRÉSERVÉ et accessible à la demande depuis la vue Core Manager (un clic) — il gère l'installation WSL avec élévation UAC + les outils Linux, sans friction au premier lancement.
 - Aucun fichier supprimé, aucune réécriture : 3 fichiers existants modifiés de manière ciblée (electron-main.cjs, main-preload.cjs, CoreManagerView.tsx). Le wizard et tout le backend restent intacts.
 - Build local validé (tsc + vite + bundle). Le push déclenchera le workflow GitHub Actions qui produira le `GuymaCyb-Setup-v1.0.0.exe` (NSIS, x64).
+
+---
+Task ID: VITE-RUNTIME-FIX-1
+Agent: main (Z.ai Code)
+Task: Corriger le bug de packaging critique — `Cannot find module 'vite'` au démarrage de l'app installée. server.ts importait statiquement createViteServer depuis vite, mais build-server-bundle.js marquait vite comme external, donc le bundle server.cjs gardait un require('vite') au top-level, exécuté au chargement avant tout check NODE_ENV. Sur machine propre sans node_modules/vite, crash immédiat.
+
+Work Log:
+- Reproduction du bug confirmée : copie du bundle server.cjs dans /tmp/vite-test (sans node_modules), lancement en NODE_ENV=production → `Error: Cannot find module 'vite'` à la ligne 63 du bundle (position 1356013, profondeur accolades = 1 = top-level du module IIFE). Le `define process.env.NODE_ENV='production'` de build-server-bundle.js NE permet PAS à esbuild de tree-shake un import ESM statique — esbuild préserve les side-effects des modules externes au top-level d'un bundle CJS. Le commentaire de build-server-bundle.js (lignes 101-108 anciennes) était donc faux.
+- Fix server.ts : suppression de l'import statique `import { createServer as createViteServer } from 'vite'` en tête de fichier. Remplacé par un import DYNAMIQUE `const { createServer: createViteServer } = await import('vite')` à l'intérieur de la branche `if (!isProd)`. esbuild génère alors un `require('vite')` paresseux DANS la branche dev ; combiné au `define process.env.NODE_ENV='production'`, la branche devient du dead code et esbuild tree-shake complètement l'import — le bundle prod ne contient plus AUCUNE référence à vite.
+- Commentaire explicatif détaillé ajouté en tête de server.ts (pourquoi pas d'import statique de vite) et dans build-server-bundle.js (remplace l'ancien commentaire erroné qui prétendait que le define suffisait).
+- Vérification bundle : `grep -o 'require("vite")' dist-server/server.cjs | wc -l` = 0 occurrence. Le bundle de 1.46 MB est désormais 100% autonome (aucune dépendance runtime vers node_modules/vite).
+- Smoke test production (environnement simulé sans node_modules) :
+  * /tmp/vite-test/ contient uniquement server.cjs + sql-wasm.wasm + dist/
+  * `NODE_ENV=production PORT=3999 node server.cjs` → démarre sans erreur
+  * Logs : « [ShadowScan] Server listening on http://127.0.0.1:3999 » + « Local SQLite database initialized »
+  * GET /api/health → 200 `{"status":"UP","engine":"ShadowScan Real Network Scanner v1.0.0","sqlite":{"connected":true,"dbPath":"...","targetsCount":3},"memoryMb":11,"threads":2}`
+  * GET /api/core/status → 200 (statut réel plateforme + outils disponibles/manquants)
+  * GET / → 200, 1591 bytes (index.html servi par express.static en mode prod)
+  * Aucune erreur `Cannot find module 'vite'` — le bug est résolu.
+- Vérifications locales : `npx tsc --noEmit` 0 erreur ; `npx vite build` OK (44 modules, 585 ms) ; `node desktop/build-server-bundle.js` OK (server.cjs 1.46 MB + sql-wasm.wasm 658 KB).
+
+Stage Summary:
+- Bug critique de packaging résolu : l'app installée démarre désormais sur une machine Windows 10/11 PROPRE (sans projet source ni node_modules) — le moteur Node backend ne tente plus de charger vite en production.
+- Fix minimal et ciblé : 2 fichiers modifiés (server.ts : import dynamique + commentaire ; build-server-bundle.js : commentaire corrigé). Aucune réécriture, aucun fichier supprimé.
+- Le bundle dist-server/server.cjs est autonome : 0 référence à vite, 0 dépendance runtime vers node_modules. L'app Electron embarque uniquement server.cjs + sql-wasm.wasm + dist/ (frontend) + shadowscan-core.exe (Rust) + security-scripts/.
+- Smoke test end-to-end validé : serveur démarre, /api/health répond UP, /api/core/status répond le statut réel, frontend servi correctement en production.

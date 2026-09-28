@@ -1,5 +1,15 @@
 import express from 'express';
-import { createServer as createViteServer } from 'vite';
+// IMPORTANT : ne PAS importer `vite` statiquement ici.
+// `desktop/build-server-bundle.js` marque `vite` comme external (il pèse ~10 MB
+// et n'est utile qu'en dev). Un import statique serait converti par esbuild en
+// `require('vite')` AU TOP-LEVEL du bundle CJS `dist-server/server.cjs`, exécuté
+// au chargement du module — avant tout check `NODE_ENV`. Sur l'app installée,
+// `node_modules/vite` n'est pas embarqué dans les resources Electron, donc le
+// serveur crasherait avec `Cannot find module 'vite'` dès le démarrage.
+// On importe donc `vite` DYNAMIQUEMENT, uniquement dans la branche dev
+// (`!isProd`), via `await import('vite')`. esbuild génère alors un
+// `require('vite')` paresseux à l'intérieur de la branche, jamais exécuté en
+// production.
 import path from 'path';
 import fs from 'fs';
 import os from 'os';
@@ -779,6 +789,11 @@ async function startServer() {
   // Vite integration
   const isProd = process.env.NODE_ENV === 'production';
   if (!isProd) {
+    // Import DYNAMIQUE de vite : en production ce code n'est jamais atteint,
+    // donc `require('vite')` (généré par esbuild) n'est jamais exécuté et le
+    // bundle prod n'a pas besoin de `node_modules/vite`. Voir le commentaire
+    // en tête de fichier pour le détail du bug de packaging que ça corrige.
+    const { createServer: createViteServer } = await import('vite');
     const vite = await createViteServer({
       server: { middlewareMode: true },
       appType: 'spa',
