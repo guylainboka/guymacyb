@@ -8,11 +8,11 @@
 #   1. `iw dev <iface> scan`        (passive/direct, nl80211)
 #   2. `iwlist <iface> scan`        (wireless-tools legacy)
 #   3. `aircrack-ng` (airmon-ng + airodump-ng)  — NOT typically available here
-#   4. builtin-simulated            (realistic French SSIDs, clearly labelled)
 #
-# The script ALSO tries to parse real `iw`/`iwlist` output even when a real
-# WiFi interface is missing (it will just produce no rows). The fallback
-# builtin-simulated mode produces 6-8 realistic networks.
+# Doctrine « zéro simulation » : si aucun matériel WiFi n'est disponible, le
+# script retourne honnêtement {mode: "no-wireless-hardware", error: ...} —
+# AUCUNE donnée simulée n'est générée (l'ancien mode « builtin-simulated »
+# qui produisait de faux SSIDs français a été supprimé).
 #
 # Output: a single JSON object on stdout (logs on stderr).
 set -euo pipefail
@@ -326,78 +326,11 @@ def parse_iwlist(text):
     return nets
 
 # ============================================================
-#  Builtin-simulated networks (clearly labelled)
+#  Fonction builtin_networks() SUPPRIMÉE — doctrine « zéro simulation »
+#  (l'ancien code retournait 8 faux SSIDs français FreeWifi/Livebox/Bbox…
+#  jamais appelée en pratique, mais source de confusion. Le script retourne
+#  désormais honnêtement {mode: "no-wireless-hardware"} si pas de matériel.)
 # ============================================================
-def builtin_networks():
-    """Return 6-8 realistic French WiFi networks."""
-    # Realistic OUI prefixes mapped to known vendors so lookup_vendor works.
-    base = now_iso()
-    return [
-        {
-            "bssid": "F4:CA:E5:11:22:01", "ssid": "FreeWifi_secure", "channel": 6,
-            "frequency": 2437, "signalDbm": -55, "quality": 90,
-            "encryption": "WPA2", "cipher": "CCMP", "authMode": "PSK",
-            "securityFlags": ["AES-CCMP","PSK","PMF_CAPABLE"],
-            "vendor": "TP-Link", "isHidden": False, "clients": 3,
-            "firstSeen": iso_offset(120), "lastSeen": base,
-        },
-        {
-            "bssid": "8C:DC:D4:00:11:02", "ssid": "Livebox-AB12", "channel": 11,
-            "frequency": 2462, "signalDbm": -62, "quality": 76,
-            "encryption": "WPA2", "cipher": "CCMP", "authMode": "PSK",
-            "securityFlags": ["AES-CCMP","PSK","WPS_ENABLED"],
-            "vendor": "Netgear", "isHidden": False, "clients": 5,
-            "firstSeen": iso_offset(180), "lastSeen": base,
-        },
-        {
-            "bssid": "00:1A:11:33:55:03", "ssid": "Bbox-A1B2C3", "channel": 1,
-            "frequency": 2412, "signalDbm": -68, "quality": 64,
-            "encryption": "WPA2/WPA3", "cipher": "CCMP", "authMode": "PSK/SAE",
-            "securityFlags": ["AES-CCMP","PSK","SAE","PMF_ENABLED"],
-            "vendor": "D-Link", "isHidden": False, "clients": 2,
-            "firstSeen": iso_offset(60), "lastSeen": base,
-        },
-        {
-            "bssid": "00:11:22:7A:8B:04", "ssid": "NETGEAR_5G", "channel": 44,
-            "frequency": 5220, "signalDbm": -71, "quality": 58,
-            "encryption": "WPA3", "cipher": "GCMP", "authMode": "SAE",
-            "securityFlags": ["GCMP","SAE","PMF_ENABLED"],
-            "vendor": "Cisco", "isHidden": False, "clients": 1,
-            "firstSeen": iso_offset(90), "lastSeen": base,
-        },
-        {
-            "bssid": "14:EB:B6:99:88:05", "ssid": "eduroam", "channel": 36,
-            "frequency": 5180, "signalDbm": -75, "quality": 50,
-            "encryption": "WPA2", "cipher": "CCMP", "authMode": "802.1X",
-            "securityFlags": ["AES-CCMP","EAP","PMF_ENABLED"],
-            "vendor": "Asus", "isHidden": False, "clients": 12,
-            "firstSeen": iso_offset(300), "lastSeen": base,
-        },
-        {
-            "bssid": "AC:84:C6:AA:BB:06", "ssid": "Guest-WiFi", "channel": 6,
-            "frequency": 2437, "signalDbm": -80, "quality": 40,
-            "encryption": "OPEN", "cipher": "", "authMode": "",
-            "securityFlags": [],
-            "vendor": "Huawei", "isHidden": False, "clients": 7,
-            "firstSeen": iso_offset(45), "lastSeen": base,
-        },
-        {
-            "bssid": "B8:27:EB:12:34:07", "ssid": "", "channel": 4,
-            "frequency": 2427, "signalDbm": -85, "quality": 30,
-            "encryption": "WPA", "cipher": "TKIP", "authMode": "PSK",
-            "securityFlags": ["TKIP","PSK","HIDDEN_SSID"],
-            "vendor": "Raspberry Pi", "isHidden": True, "clients": 0,
-            "firstSeen": iso_offset(150), "lastSeen": base,
-        },
-        {
-            "bssid": "00:0C:E6:DE:AD:08", "ssid": "Cafe-des-Amis", "channel": 9,
-            "frequency": 2452, "signalDbm": -73, "quality": 54,
-            "encryption": "WEP", "cipher": "WEP-104", "authMode": "",
-            "securityFlags": [],
-            "vendor": "Belkin", "isHidden": False, "clients": 4,
-            "firstSeen": iso_offset(75), "lastSeen": base,
-        },
-    ]
 
 def summarize(nets):
     secure = sum(1 for n in nets if n["encryption"] in ("WPA2","WPA3","WPA2/WPA3"))
@@ -450,8 +383,9 @@ if not networks:
         aircrack_present = False
     if aircrack_present:
         # We don't try to actually run airodump-ng (would need monitor mode + sudo).
-        # Just mark the mode if aircrack-ng was present but we can't run it.
-        # Fall through to builtin-simulated.
+        # Doctrine « zéro simulation » : on NE génère pas de données simulées.
+        # Si aucun matériel/outils ne fonctionne, on tombe sur l'état honnête
+        # {mode: "no-wireless-hardware"} ci-dessous.
         pass
 
 # 4. Aucun hardware/outil — état honnête (PAS de données simulées)

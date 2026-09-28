@@ -1,18 +1,20 @@
 import React, { useState } from 'react';
-import { EndpointItem } from '../../types';
+import { EndpointItem, Finding } from '../../types';
 
 interface AnalyseWebViewProps {
   endpointsTree: EndpointItem[];
+  findings: Finding[];
+  targetUrl: string;
   onTransferToAttack: () => void;
   onRescan: () => void;
-  targetUrl: string;
 }
 
 export const AnalyseWebView: React.FC<AnalyseWebViewProps> = ({
   endpointsTree,
+  findings,
+  targetUrl,
   onTransferToAttack,
   onRescan,
-  targetUrl,
 }) => {
   const [filterQuery, setFilterQuery] = useState<string>('');
   const [activeTab, setActiveTab] = useState<'headers' | 'tls' | 'cookies' | 'methods' | 'posture'>('headers');
@@ -43,22 +45,59 @@ export const AnalyseWebView: React.FC<AnalyseWebViewProps> = ({
     return matchesSelf || matchesChild;
   });
 
+  // Doctrine « zéro simulation » : tous les compteurs sont DÉRIVÉS des vraies
+  // données passées en props (endpointsTree + findings). Aucune valeur
+  // hardcodée. L'ancien code affichait « 137 URLs / 42 API / 9 tech / 3H-7M-11L »
+  // en permanence, même sans scan.
+  const endpointsCount = endpointsTree.length;
+  const apiEndpoints = endpointsTree.filter((e) => e.type === 'api' || /\/api\//i.test(e.path));
+  const apiCount = apiEndpoints.length;
+  // Comptage par méthode HTTP (depuis les endpoints réels)
+  const methodCounts = endpointsTree.reduce<Record<string, number>>((acc, e) => {
+    const m = (e.method || 'GET').toUpperCase();
+    acc[m] = (acc[m] || 0) + 1;
+    return acc;
+  }, {});
+  const getMethodCount = (m: string) => methodCounts[m.toUpperCase()] || 0;
+  // Anomalies : dérivées des findings réels par sévérité
+  const anomaliesTotal = findings.length;
+  const highCount = findings.filter((f) => f.severity === 'HIGH' || f.severity === 'CRITICAL').length;
+  const medCount = findings.filter((f) => f.severity === 'MEDIUM').length;
+  const lowCount = findings.filter((f) => f.severity === 'LOW' || f.severity === 'INFO').length;
+  // Technologies : uniques parmi les endpoints qui en portent (champ note)
+  const technologies = Array.from(new Set(
+    endpointsTree.map((e) => e.note).filter(Boolean) as string[]
+  ));
+  const techCount = technologies.length;
+
   return (
     <div className="flex-1 overflow-y-auto p-5 flex flex-col gap-5 font-sans">
-      {/* Operational Status Bar */}
+      {/* Operational Status Bar — VRAIES valeurs dérivées du scan */}
       <div className="bg-[#171b26] border border-[#24314c] rounded-lg p-3.5 flex flex-wrap items-center justify-between gap-3 shadow-sm font-mono text-xs">
         <div className="flex flex-wrap items-center gap-3">
-          <div className="flex items-center gap-2 px-2.5 py-1 bg-[#10b981]/15 border border-[#10b981]/30 rounded text-[#10b981]">
-            <span className="w-2 h-2 rounded-full bg-[#10b981] animate-pulse"></span>
-            <span className="font-bold">Terminé en 14.8s</span>
-          </div>
-          <span className="text-[#8c909f]">Profondeur crawler: 4</span>
-          <span className="text-[#424754]">|</span>
-          <span className="text-[#dfe2f1]">137 URLs inspectées</span>
-          <span className="text-[#424754]">|</span>
-          <span className="text-[#c2c6d6]">IP: 192.0.2.42</span>
-          <span className="text-[#424754]">|</span>
-          <span className="text-[#4cd7f6]">Origin: Nginx/1.24.0 (Ubuntu)</span>
+          {endpointsCount === 0 && anomaliesTotal === 0 ? (
+            <div className="flex items-center gap-2 px-2.5 py-1 bg-[#8c909f]/15 border border-[#8c909f]/30 rounded text-[#8c909f]">
+              <span className="material-symbols-outlined text-[14px]">info</span>
+              <span className="font-bold">Aucun scan effectué — lancez une analyse depuis l'écran Scanner & Recon</span>
+            </div>
+          ) : (
+            <>
+              <div className="flex items-center gap-2 px-2.5 py-1 bg-[#10b981]/15 border border-[#10b981]/30 rounded text-[#10b981]">
+                <span className="w-2 h-2 rounded-full bg-[#10b981] animate-pulse"></span>
+                <span className="font-bold">{endpointsCount} endpoint(s) découvert(s)</span>
+              </div>
+              <span className="text-[#424754]">|</span>
+              <span className="text-[#dfe2f1]">{apiCount} route(s) API</span>
+              <span className="text-[#424754]">|</span>
+              <span className="text-[#ffb4ab]">{anomaliesTotal} anomalie(s)</span>
+              {targetUrl && (
+                <>
+                  <span className="text-[#424754]">|</span>
+                  <span className="text-[#c2c6d6] truncate max-w-[260px]">Cible : {targetUrl}</span>
+                </>
+              )}
+            </>
+          )}
         </div>
 
         <div className="flex items-center gap-2">
@@ -85,9 +124,9 @@ export const AnalyseWebView: React.FC<AnalyseWebViewProps> = ({
         </div>
       </div>
 
-      {/* 4 Metrics KPI Bar Grid */}
+      {/* 4 Metrics KPI Bar Grid — VRAIES valeurs dérivées d'endpointsTree/findings */}
       <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-4 gap-4">
-        {/* Metric 1 */}
+        {/* Metric 1 — Endpoints réellement découverts */}
         <div className="bg-[#171b26] border border-[#24314c] rounded-lg p-4 flex flex-col justify-between">
           <div>
             <div className="flex items-center justify-between text-[#8c909f] font-mono text-xs">
@@ -95,25 +134,37 @@ export const AnalyseWebView: React.FC<AnalyseWebViewProps> = ({
               <span className="material-symbols-outlined text-[16px] text-[#4cd7f6]">alt_route</span>
             </div>
             <div className="flex items-baseline gap-2 mt-2">
-              <span className="text-2xl font-bold font-mono text-[#dfe2f1]">137</span>
-              <span className="text-xs font-mono text-[#10b981]">+12 subpaths</span>
+              <span className="text-2xl font-bold font-mono text-[#dfe2f1]">{endpointsCount}</span>
+              {endpointsCount > 0 && (
+                <span className="text-xs font-mono text-[#10b981]">scan réel</span>
+              )}
             </div>
           </div>
           <div className="mt-3">
-            <div className="h-1.5 w-full bg-[#0a0e18] rounded-full overflow-hidden flex">
-              <div style={{ width: '70%' }} className="bg-[#4cd7f6]" title="GET: 98"></div>
-              <div style={{ width: '22%' }} className="bg-[#f59e0b]" title="POST: 31"></div>
-              <div style={{ width: '8%' }} className="bg-[#ec4899]" title="PUT: 8"></div>
-            </div>
-            <div className="flex justify-between font-mono text-[10px] text-[#8c909f] mt-1.5">
-              <span>GET 98</span>
-              <span>POST 31</span>
-              <span>PUT 8</span>
-            </div>
+            {endpointsCount > 0 ? (
+              <>
+                <div className="h-1.5 w-full bg-[#0a0e18] rounded-full overflow-hidden flex">
+                  {(['GET','POST','PUT','DELETE','PATCH'] as const).map((m, i) => {
+                    const c = getMethodCount(m);
+                    if (c === 0) return null;
+                    const colors = ['bg-[#4cd7f6]','bg-[#f59e0b]','bg-[#ec4899]','bg-[#a78bfa]','bg-[#34d399]'];
+                    const pct = (c / endpointsCount) * 100;
+                    return <div key={m} style={{ width: pct + '%' }} className={colors[i]} title={`${m}: ${c}`} />;
+                  })}
+                </div>
+                <div className="flex flex-wrap gap-x-3 font-mono text-[10px] text-[#8c909f] mt-1.5">
+                  {(['GET','POST','PUT','DELETE','PATCH'] as const).map((m) =>
+                    getMethodCount(m) > 0 ? <span key={m}>{m} {getMethodCount(m)}</span> : null
+                  )}
+                </div>
+              </>
+            ) : (
+              <div className="text-[10px] text-[#8c909f] font-mono">Aucun endpoint découvert</div>
+            )}
           </div>
         </div>
 
-        {/* Metric 2 */}
+        {/* Metric 2 — Routes API réellement visibles */}
         <div className="bg-[#171b26] border border-[#24314c] rounded-lg p-4 flex flex-col justify-between">
           <div>
             <div className="flex items-center justify-between text-[#8c909f] font-mono text-xs">
@@ -121,23 +172,22 @@ export const AnalyseWebView: React.FC<AnalyseWebViewProps> = ({
               <span className="material-symbols-outlined text-[16px] text-[#3b82f6]">api</span>
             </div>
             <div className="flex items-baseline gap-2 mt-2">
-              <span className="text-2xl font-bold font-mono text-[#dfe2f1]">42</span>
-              <span className="text-xs font-mono text-[#8c909f]">/ 3 namespaces</span>
+              <span className="text-2xl font-bold font-mono text-[#dfe2f1]">{apiCount}</span>
+              <span className="text-xs font-mono text-[#8c909f]">route(s) /api/</span>
             </div>
           </div>
           <div className="mt-3 flex flex-col gap-1 font-mono text-[10px] text-[#c2c6d6]">
-            <div className="flex items-center justify-between">
-              <span className="truncate">/api/v1/auth</span>
-              <span className="text-[#10b981]">OAUTH2</span>
-            </div>
-            <div className="flex items-center justify-between">
-              <span className="truncate">/api/v1/users/{'{id}'}</span>
-              <span className="text-[#ffb4ab]">IDOR SUSP</span>
-            </div>
+            {apiEndpoints.slice(0, 2).map((e) => (
+              <div key={e.id} className="flex items-center justify-between">
+                <span className="truncate">{e.path}</span>
+                <span className="text-[#8c909f]">{e.method}</span>
+              </div>
+            ))}
+            {apiCount === 0 && <div className="text-[#8c909f]">Aucune route API détectée</div>}
           </div>
         </div>
 
-        {/* Metric 3 */}
+        {/* Metric 3 — Technologies réellement détectées (notes uniques) */}
         <div className="bg-[#171b26] border border-[#24314c] rounded-lg p-4 flex flex-col justify-between">
           <div>
             <div className="flex items-center justify-between text-[#8c909f] font-mono text-xs">
@@ -145,27 +195,21 @@ export const AnalyseWebView: React.FC<AnalyseWebViewProps> = ({
               <span className="material-symbols-outlined text-[16px] text-[#10b981]">layers</span>
             </div>
             <div className="flex items-baseline gap-2 mt-2">
-              <span className="text-2xl font-bold font-mono text-[#dfe2f1]">9</span>
-              <span className="text-xs font-mono text-[#10b981]">Fingerprinted</span>
+              <span className="text-2xl font-bold font-mono text-[#dfe2f1]">{techCount}</span>
+              <span className="text-xs font-mono text-[#10b981]">{techCount > 0 ? 'Fingerprinted' : '—'}</span>
             </div>
           </div>
           <div className="mt-2 flex flex-wrap gap-1 font-mono text-[10px]">
-            <span className="px-1.5 py-0.5 rounded bg-[#0a0e18] text-[#dfe2f1] border border-[#24314c]">
-              Nginx 1.24
-            </span>
-            <span className="px-1.5 py-0.5 rounded bg-[#0a0e18] text-[#dfe2f1] border border-[#24314c]">
-              Express
-            </span>
-            <span className="px-1.5 py-0.5 rounded bg-[#0a0e18] text-[#dfe2f1] border border-[#24314c]">
-              PostgreSQL
-            </span>
-            <span className="px-1.5 py-0.5 rounded bg-[#0a0e18] text-[#dfe2f1] border border-[#24314c]">
-              React 18
-            </span>
+            {technologies.slice(0, 4).map((t) => (
+              <span key={t} className="px-1.5 py-0.5 rounded bg-[#0a0e18] text-[#dfe2f1] border border-[#24314c]">
+                {t}
+              </span>
+            ))}
+            {techCount === 0 && <span className="text-[#8c909f]">Aucune technologie détectée</span>}
           </div>
         </div>
 
-        {/* Metric 4 */}
+        {/* Metric 4 — Anomalies réelles par sévérité */}
         <div className="bg-[#171b26] border border-[#24314c] rounded-lg p-4 flex flex-col justify-between">
           <div>
             <div className="flex items-center justify-between text-[#8c909f] font-mono text-xs">
@@ -173,14 +217,14 @@ export const AnalyseWebView: React.FC<AnalyseWebViewProps> = ({
               <span className="material-symbols-outlined text-[16px] text-[#ffb4ab]">error_outline</span>
             </div>
             <div className="flex items-baseline gap-2 mt-2">
-              <span className="text-2xl font-bold font-mono text-[#ffb4ab]">21</span>
-              <span className="text-xs font-mono text-[#ffb4ab]">Alertes actives</span>
+              <span className="text-2xl font-bold font-mono text-[#ffb4ab]">{anomaliesTotal}</span>
+              <span className="text-xs font-mono text-[#ffb4ab]">findings</span>
             </div>
           </div>
           <div className="mt-3 flex items-center justify-between font-mono text-[10px]">
-            <span className="text-[#ffb4ab] font-bold">3 HIGH Exploitable</span>
-            <span className="text-[#fbbf24]">7 MED Durcissement</span>
-            <span className="text-[#8c909f]">11 LOW Info</span>
+            <span className="text-[#ffb4ab] font-bold">{highCount} HIGH</span>
+            <span className="text-[#fbbf24]">{medCount} MED</span>
+            <span className="text-[#8c909f]">{lowCount} LOW/INFO</span>
           </div>
         </div>
       </div>
@@ -196,7 +240,7 @@ export const AnalyseWebView: React.FC<AnalyseWebViewProps> = ({
                 Arborescence & Cartographie
               </h3>
             </div>
-            <span className="font-mono text-[11px] text-[#8c909f]">137 Découvertes</span>
+            <span className="font-mono text-[11px] text-[#8c909f]">{endpointsCount} Découverte(s)</span>
           </div>
 
           {/* Filter Bar */}

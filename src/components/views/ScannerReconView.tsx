@@ -234,8 +234,7 @@ export const ScannerReconView: React.FC<ScannerReconViewProps> = ({
               <span className="px-1.5 py-0.5 bg-[#0a0e18] rounded border border-[#24314c]">
                 {isAnalyzing ? 'Analyse active...' : 'Zéro impact'}
               </span>
-              <span className="px-1.5 py-0.5 bg-[#0a0e18] rounded border border-[#24314c]">137 Endpoints</span>
-              <span className="px-1.5 py-0.5 bg-[#0a0e18] rounded border border-[#24314c]">9 Technologies</span>
+              <span className="px-1.5 py-0.5 bg-[#0a0e18] rounded border border-[#24314c]">Cartographie passive</span>
             </div>
           </button>
 

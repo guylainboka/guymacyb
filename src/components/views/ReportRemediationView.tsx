@@ -1,39 +1,142 @@
-import React, { useState } from 'react';
-import { TargetConfig } from '../../types';
+import React, { useState, useEffect, useMemo } from 'react';
+import { TargetConfig, Finding, Severity } from '../../types';
 
 interface ReportRemediationViewProps {
   targetConfig: TargetConfig;
+  findings: Finding[];
 }
+
+// Comptage des findings par sévérité — dérivé des données réelles.
+const countBySeverity = (findings: Finding[], severity: Severity): number =>
+  findings.filter((f) => f.severity === severity).length;
+
+// Risque global dérivé : si au moins un finding CRITICAL/HIGH → ÉLEVÉ,
+// sinon MEDIUM → MOYEN, sinon FAIBLE/INFO. Si aucun finding, « NON ÉVALUÉ ».
+const deriveOverallRisk = (findings: Finding[]): { label: string; tone: 'high' | 'medium' | 'low' | 'unknown' } => {
+  if (findings.length === 0) return { label: 'NON ÉVALUÉ', tone: 'unknown' };
+  const hasHigh = findings.some((f) => f.severity === 'CRITICAL' || f.severity === 'HIGH');
+  const hasMedium = findings.some((f) => f.severity === 'MEDIUM');
+  if (hasHigh) return { label: 'ÉLEVÉ', tone: 'high' };
+  if (hasMedium) return { label: 'MOYEN', tone: 'medium' };
+  return { label: 'FAIBLE', tone: 'low' };
+};
+
+// Score CVSS de référence = score maximum parmi les findings (0 si aucun).
+const deriveCvssBaseScore = (findings: Finding[]): number => {
+  if (findings.length === 0) return 0;
+  return Math.max(...findings.map((f) => f.cvss));
+};
+
+// Formatage YYYYMMDD-HHmmss pour générer un reportId réel basé sur le timestamp.
+const formatTimestampId = (date: Date): string => {
+  const pad = (n: number) => String(n).padStart(2, '0');
+  return (
+    `${date.getFullYear()}${pad(date.getMonth() + 1)}${pad(date.getDate())}` +
+    `-${pad(date.getHours())}${pad(date.getMinutes())}${pad(date.getSeconds())}`
+  );
+};
+
+// Hash SHA-256 réel via WebCrypto (fallback simple si crypto.subtle absent).
+const computeSha256 = async (input: string): Promise<string> => {
+  try {
+    if (typeof crypto !== 'undefined' && crypto.subtle) {
+      const buf = await crypto.subtle.digest('SHA-256', new TextEncoder().encode(input));
+      return Array.from(new Uint8Array(buf))
+        .map((b) => b.toString(16).padStart(2, '0'))
+        .join('');
+    }
+  } catch {
+    // Silencieusement — on tombe sur le fallback déterministe ci-dessous.
+  }
+  // Fallback simple (FNV-1a 32 bits) — pas cryptographiquement sûr mais
+  // déterministe et sans donnée fictive.
+  let hash = 0x811c9dc5;
+  for (let i = 0; i < input.length; i++) {
+    hash ^= input.charCodeAt(i);
+    hash = Math.imul(hash, 0x01000193);
+  }
+  return `fnv1a-${(hash >>> 0).toString(16).padStart(8, '0')}`;
+};
 
 export const ReportRemediationView: React.FC<ReportRemediationViewProps> = ({
   targetConfig,
+  findings,
 }) => {
   const [copyStatus, setCopyStatus] = useState<string | null>(null);
   const [showIssueModal, setShowIssueModal] = useState<boolean>(false);
   const [activeTabRemediation, setActiveTabRemediation] = useState<'idor' | 'sqli' | 'csp'>('idor');
+  const [sha256, setSha256] = useState<string>('—');
 
-  const handleCopyJson = () => {
-    const reportData = {
-      reportId: 'REP-20240524-EXM',
+  // reportId réel dérivé de l'horodatage courant (pas de valeur hardcodée).
+  const reportId = useMemo(() => `REP-${formatTimestampId(new Date())}`, []);
+
+  // Métriques dérivées des findings réels.
+  const criticalCount = useMemo(() => countBySeverity(findings, 'CRITICAL'), [findings]);
+  const highCount = useMemo(() => countBySeverity(findings, 'HIGH'), [findings]);
+  const mediumCount = useMemo(() => countBySeverity(findings, 'MEDIUM'), [findings]);
+  const lowCount = useMemo(() => countBySeverity(findings, 'LOW'), [findings]);
+  const infoCount = useMemo(() => countBySeverity(findings, 'INFO'), [findings]);
+
+  const overallRisk = useMemo(() => deriveOverallRisk(findings), [findings]);
+  const cvssBaseScore = useMemo(() => deriveCvssBaseScore(findings), [findings]);
+
+  // Construction du payload JSON — dérivé uniquement des données réelles.
+  const reportData = useMemo(
+    () => ({
+      reportId,
       auditEngine: 'Guyma Cyb v1.0.0',
       target: targetConfig.url,
       timestamp: new Date().toISOString(),
       operator: targetConfig.operatorId,
-      overallRisk: 'HIGH',
-      cvssBaseScore: 7.4,
+      overallRisk: overallRisk.label,
+      cvssBaseScore,
       findingsSummary: {
-        critical: 0,
-        high: 3,
-        medium: 7,
-        low: 11,
+        critical: criticalCount,
+        high: highCount,
+        medium: mediumCount,
+        low: lowCount,
+        info: infoCount,
       },
-      auditSurface: {
-        endpoints: 137,
-        apiRoutes: 42,
-        technologies: 9,
-        testedVectors: 8,
-      },
+      findingsCount: findings.length,
+      // Liste explicite des findings (titre, sévérité, CVSS, CWE, composant).
+      // Les surfaces endpoints/technologies ne sont pas disponibles ici — on
+      // ne les invente pas (doctrine « zéro simulation »).
+      findings: findings.map((f) => ({
+        id: f.id,
+        title: f.title,
+        severity: f.severity,
+        cvss: f.cvss,
+        cwe: f.cwe,
+        affectedComponent: f.affectedComponent,
+      })),
+    }),
+    [
+      reportId,
+      targetConfig.url,
+      targetConfig.operatorId,
+      overallRisk.label,
+      cvssBaseScore,
+      criticalCount,
+      highCount,
+      mediumCount,
+      lowCount,
+      infoCount,
+      findings,
+    ]
+  );
+
+  // Calcul asynchrone du sceau cryptographique réel (SHA-256 du JSON du rapport).
+  useEffect(() => {
+    let cancelled = false;
+    computeSha256(JSON.stringify(reportData)).then((hash) => {
+      if (!cancelled) setSha256(hash);
+    });
+    return () => {
+      cancelled = true;
     };
+  }, [reportData]);
+
+  const handleCopyJson = () => {
     navigator.clipboard.writeText(JSON.stringify(reportData, null, 2));
     setCopyStatus('Copié !');
     setTimeout(() => setCopyStatus(null), 2000);
@@ -42,6 +145,24 @@ export const ReportRemediationView: React.FC<ReportRemediationViewProps> = ({
   const handlePrint = () => {
     window.print();
   };
+
+  // Affichage condensé du SHA-256 (16 premiers + 5 derniers) pour la lisibilité.
+  const sha256Short = useMemo(() => {
+    if (sha256 === '—') return '—';
+    if (sha256.length <= 24) return sha256;
+    return `${sha256.slice(0, 16)}…${sha256.slice(-5)}`;
+  }, [sha256]);
+
+  const riskToneClasses: Record<typeof overallRisk.tone, string> = {
+    high: 'bg-[#93000a]/30 text-[#ffb4ab] border-[#ffb4ab]/30',
+    medium: 'bg-[#f59e0b]/15 text-[#fbbf24] border-[#fbbf24]/30',
+    low: 'bg-[#10b981]/15 text-[#10b981] border-[#10b981]/30',
+    unknown: 'bg-[#262a35] text-[#8c909f] border-[#424754]',
+  };
+
+  // Calcul de l'arc CVSS pour la jauge (0 → cercle plein, 10 → cercle vide).
+  const circumference = 2 * Math.PI * 40; // r=40
+  const cvssOffset = circumference - (cvssBaseScore / 10) * circumference;
 
   return (
     <div className="flex-1 overflow-y-auto p-6 flex flex-col gap-6 font-sans">
@@ -57,7 +178,7 @@ export const ReportRemediationView: React.FC<ReportRemediationViewProps> = ({
                 Rapport de Sécurité & Plan d'Action Développeurs
               </h2>
               <span className="px-2 py-0.5 rounded bg-[#262a35] text-[#4cd7f6] text-[10px]">
-                ID: REP-20240524-EXM
+                ID: {reportId}
               </span>
             </div>
             <p className="text-xs text-[#8c909f] mt-0.5">
@@ -108,8 +229,10 @@ export const ReportRemediationView: React.FC<ReportRemediationViewProps> = ({
               <span className="font-mono text-xs font-bold text-[#dfe2f1] uppercase tracking-wider">
                 Synthèse du Niveau de Menace
               </span>
-              <span className="px-2 py-0.5 rounded bg-[#93000a]/30 text-[#ffb4ab] font-mono text-[11px] font-bold border border-[#ffb4ab]/30">
-                RISQUE GLOBAL : ÉLEVÉ
+              <span
+                className={`px-2 py-0.5 rounded font-mono text-[11px] font-bold border ${riskToneClasses[overallRisk.tone]}`}
+              >
+                RISQUE GLOBAL : {overallRisk.label}
               </span>
             </div>
 
@@ -122,16 +245,16 @@ export const ReportRemediationView: React.FC<ReportRemediationViewProps> = ({
                     cx="50"
                     cy="50"
                     r="40"
-                    stroke="#ff5449"
+                    stroke={overallRisk.tone === 'high' ? '#ff5449' : overallRisk.tone === 'medium' ? '#f59e0b' : overallRisk.tone === 'low' ? '#10b981' : '#424754'}
                     strokeWidth="8"
-                    strokeDasharray="251.2"
-                    strokeDashoffset="65"
+                    strokeDasharray={circumference}
+                    strokeDashoffset={cvssOffset}
                     strokeLinecap="round"
                     fill="none"
                   />
                 </svg>
                 <div className="absolute flex flex-col items-center justify-center text-center font-mono">
-                  <span className="text-3xl font-bold text-white">7.4</span>
+                  <span className="text-3xl font-bold text-white">{cvssBaseScore.toFixed(1)}</span>
                   <span className="text-[10px] text-[#ffb4ab] font-bold">CVSS BASE</span>
                 </div>
               </div>
@@ -139,23 +262,23 @@ export const ReportRemediationView: React.FC<ReportRemediationViewProps> = ({
               <div className="flex flex-col gap-2 font-mono text-xs">
                 <div className="flex items-center gap-2">
                   <span className="w-2.5 h-2.5 rounded bg-[#93000a]"></span>
-                  <span className="text-[#c2c6d6]">3 Faiblesses Élevées (Exploitables)</span>
+                  <span className="text-[#c2c6d6]">{criticalCount + highCount} Faiblesses Élevées (Exploitables)</span>
                 </div>
                 <div className="flex items-center gap-2">
                   <span className="w-2.5 h-2.5 rounded bg-[#f59e0b]"></span>
-                  <span className="text-[#c2c6d6]">7 Faiblesses Moyennes (Durcissement)</span>
+                  <span className="text-[#c2c6d6]">{mediumCount} Faiblesses Moyennes (Durcissement)</span>
                 </div>
                 <div className="flex items-center gap-2">
                   <span className="w-2.5 h-2.5 rounded bg-[#3b82f6]"></span>
-                  <span className="text-[#c2c6d6]">11 Faiblesses Faibles / Info</span>
+                  <span className="text-[#c2c6d6]">{lowCount + infoCount} Faiblesses Faibles / Info</span>
                 </div>
               </div>
             </div>
           </div>
 
-          <div className="p-3 bg-[#0a0e18] rounded border border-[#24314c] font-mono text-xs text-[#8c909f] flex items-center justify-between">
-            <span>Sceau cryptographique :</span>
-            <span className="text-[#4cd7f6] font-bold">SHA-256: 8fa09...c1e92</span>
+          <div className="p-3 bg-[#0a0e18] rounded border border-[#24314c] font-mono text-xs text-[#8c909f] flex items-center justify-between gap-2">
+            <span className="shrink-0">Sceau cryptographique :</span>
+            <span className="text-[#4cd7f6] font-bold truncate" title={sha256}>SHA-256: {sha256Short}</span>
           </div>
         </div>
 
@@ -172,36 +295,65 @@ export const ReportRemediationView: React.FC<ReportRemediationViewProps> = ({
             <div className="grid grid-cols-2 sm:grid-cols-4 gap-3 mt-4">
               <div className="bg-[#0a0e18] p-3 rounded border border-[#24314c] flex flex-col">
                 <span className="font-mono text-[10px] text-[#8c909f]">Endpoints Découverts</span>
-                <span className="font-mono text-xl font-bold text-[#dfe2f1] mt-1">137</span>
-                <span className="font-mono text-[10px] text-[#4cd7f6]">70% GET • 30% POST</span>
+                <span className="font-mono text-xl font-bold text-[#dfe2f1] mt-1">—</span>
+                <span className="font-mono text-[10px] text-[#8c909f]">Non calculé ici</span>
               </div>
               <div className="bg-[#0a0e18] p-3 rounded border border-[#24314c] flex flex-col">
-                <span className="font-mono text-[10px] text-[#8c909f]">Routes API V1</span>
-                <span className="font-mono text-xl font-bold text-[#dfe2f1] mt-1">42</span>
-                <span className="font-mono text-[10px] text-[#ffb4ab]">1 BOLA/IDOR critique</span>
+                <span className="font-mono text-[10px] text-[#8c909f]">Composants affectés</span>
+                <span className="font-mono text-xl font-bold text-[#dfe2f1] mt-1">
+                  {new Set(findings.map((f) => f.affectedComponent)).size}
+                </span>
+                <span className="font-mono text-[10px] text-[#ffb4ab]">{findings.length} finding(s)</span>
               </div>
               <div className="bg-[#0a0e18] p-3 rounded border border-[#24314c] flex flex-col">
                 <span className="font-mono text-[10px] text-[#8c909f]">Technologies</span>
-                <span className="font-mono text-xl font-bold text-[#dfe2f1] mt-1">9</span>
-                <span className="font-mono text-[10px] text-[#8c909f]">Nginx, Node, PG</span>
+                <span className="font-mono text-xl font-bold text-[#dfe2f1] mt-1">—</span>
+                <span className="font-mono text-[10px] text-[#8c909f]">Non calculé ici</span>
               </div>
               <div className="bg-[#0a0e18] p-3 rounded border border-[#24314c] flex flex-col">
                 <span className="font-mono text-[10px] text-[#8c909f]">Vecteurs Testés</span>
-                <span className="font-mono text-xl font-bold text-[#dfe2f1] mt-1">8</span>
-                <span className="font-mono text-[10px] text-[#10b981]">0 Faux-positif</span>
+                <span className="font-mono text-xl font-bold text-[#dfe2f1] mt-1">{findings.length}</span>
+                <span className="font-mono text-[10px] text-[#10b981]">{findings.length} preuve(s)</span>
               </div>
             </div>
 
             <div className="mt-4 p-3 bg-[#0a0e18] rounded border border-[#24314c] font-mono text-xs text-[#c2c6d6] leading-relaxed">
-              <strong className="text-[#4cd7f6] block mb-1">Observation générale de l'audit :</strong>
-              L'application présente une bonne posture de transport (TLS 1.3, certificats valides), mais souffre d'un défaut critique d'autorisation objet au niveau de l'API REST (/api/user/{'{id}'}) et d'une vulnérabilité d'injection SQL aveugle temporelle sur le paramètre de tri.
+              <strong className="text-[#4cd7f6] block mb-1">Synthèse de l'audit :</strong>
+              {findings.length === 0 ? (
+                'Aucun finding qualifié à ce stade — lancez une analyse réelle depuis le Scanner & Recon pour obtenir une synthèse honnête de la surface évaluée.'
+              ) : (
+                <>
+                  {findings.length} vulnérabilité(s) qualifiée(s) sur la cible{' '}
+                  <strong className="text-[#dfe2f1]">{targetConfig.url}</strong>. Le score CVSS de
+                  référence ({cvssBaseScore.toFixed(1)}) correspond au score le plus élevé observé
+                  parmi les findings. Consultez l'Evidence Hub pour les preuves techniques détaillées
+                  de chaque vulnérabilité.
+                </>
+              )}
             </div>
           </div>
 
           <div className="pt-3 border-t border-[#24314c] flex items-center justify-between font-mono text-[11px] text-[#8c909f]">
             <span>Méthodologie : OWASP ASVS v4.0.3</span>
-            <span>Validateur : ShadowScan Core Engine</span>
+            <span>Validateur : Guyma Cyb Core Engine</span>
           </div>
+        </div>
+      </div>
+
+      {/* Bandeau « remédiations génériques » — doctrine zéro simulation */}
+      <div className="bg-[#1a1410] border border-[#f59e0b]/40 rounded-lg p-4 flex items-start gap-3 font-mono text-xs">
+        <span className="material-symbols-outlined text-[20px] text-[#fbbf24] shrink-0">info</span>
+        <div className="flex-1">
+          <strong className="text-[#fbbf24] block mb-0.5">
+            Exemples de remédiation génériques — non liés à vos findings spécifiques
+          </strong>
+          <span className="text-[#dfe2f1]">
+            Les correctifs ci-dessous sont des modèles pédagogiques illustrant trois classes
+            classiques de vulnérabilités (IDOR, SQLi, headers de sécurité). Pour une remédiation
+            ciblée et contextualisée à votre audit, consultez le champ{' '}
+            <code className="text-[#4cd7f6]">remediationSteps</code> de chaque finding dans
+            l'Evidence Hub (Résultats & Preuves).
+          </span>
         </div>
       </div>
 
@@ -435,7 +587,7 @@ if ($request_method = TRACE) {
                 type="button"
                 onClick={() => {
                   navigator.clipboard.writeText(
-                    `[SEC-P1] Fix BOLA/IDOR on GET /api/user/:id\nSeverity: HIGH (CVSS 8.5)\nCWE: CWE-639\nReported by: Guyma Cyb\nTarget: ${targetConfig.url}`
+                    `[SEC-P1] Fix BOLA/IDOR on GET /api/user/:id\nSeverity: HIGH (CVSS 8.5)\nCWE: CWE-639\nReported by: Guyma Cyb\nTarget: ${targetConfig.url}\nReport: ${reportId}\nFindings count: ${findings.length}`
                   );
                   alert('Template de ticket copié dans le presse-papiers.');
                   setShowIssueModal(false);

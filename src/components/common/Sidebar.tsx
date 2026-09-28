@@ -33,7 +33,6 @@ export const Sidebar: React.FC<SidebarProps> = ({
       id: 'analyse-web',
       label: 'Analyse Web',
       icon: 'travel_explore',
-      badge: '137 URI',
     },
     {
       id: 'tests-actifs-and-attaque',

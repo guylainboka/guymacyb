@@ -25,7 +25,7 @@ import {
 import { LAB_ATTACK_VECTORS } from './src/data/labAttackVectors';
 import { WIFI_LAB_VECTORS } from './src/data/wifiLabVectors';
 import { COURSE_NOTIONS } from './src/data/courseNotions';
-import { getOrCreateInstallerExeBuffer, getPackagingInfo } from './src/server/packaging';
+import { getPackagingInfo } from './src/server/packaging';
 import * as tb from './src/server/toolbridge';
 
 // PORT/HOST configurables : Electron (electron-main.cjs) injecte PORT=3000 et
@@ -169,6 +169,11 @@ async function startServer() {
   app.get('/api/targets', async (_req, res) => {
     try {
       const db = await getDatabase();
+      // Doctrine « zéro simulation » : on EXCLUT la cible virtuelle du
+      // laboratoire d'attaques (target-lab-sandbox / shadowscan-lab.internal)
+      // pour qu'elle n'apparaisse pas dans le dashboard des cibles réelles.
+      // L'ancien code mélangeait les cibles réelles scannées et la cible
+      // fictive du lab, ce qui faussait le compteur de cibles historiques.
       const results = db.exec(`
         SELECT t.id, t.url, t.domain, t.scope, t.last_scanned_at,
                COALESCE(MAX(s.risk_level), 'CLEAN') as risk,
@@ -176,6 +181,8 @@ async function startServer() {
                (SELECT COUNT(*) FROM findings f JOIN scans sc ON f.scan_id = sc.id WHERE sc.target_id = t.id) as finding_count
         FROM targets t
         LEFT JOIN scans s ON t.id = s.target_id
+        WHERE t.id != 'target-lab-sandbox'
+          AND t.url NOT LIKE '%shadowscan-lab.internal%'
         GROUP BY t.id
         ORDER BY t.last_scanned_at DESC
       `);
@@ -220,10 +227,19 @@ async function startServer() {
         FROM findings
       `;
       const params: any[] = [];
+      const conditions: string[] = [];
+      // Doctrine « zéro simulation » : on EXCLUT les findings du laboratoire
+      // d'attaques (scan_id 'lab-simulation-scan' / 'SCAN-LAB-*' / 'SCAN-WIFI-LAB-*'
+      // et target_url 'shadowscan-lab.internal') pour que le dashboard ne montre
+      // QUE les findings issus de vrais scans de cibles réelles. Les findings du
+      // lab sont accessibles via /api/lab/history (endpoint dédié).
+      conditions.push(`(scan_id NOT LIKE 'lab-%' AND scan_id NOT LIKE 'SCAN-LAB-%' AND scan_id NOT LIKE 'SCAN-WIFI-LAB-%')`);
+      conditions.push(`(target_url NOT LIKE '%shadowscan-lab.internal%')`);
       if (urlFilter) {
-        query += ` WHERE target_url LIKE ?`;
+        conditions.push(`target_url LIKE ?`);
         params.push(`%${urlFilter}%`);
       }
+      query += ` WHERE ` + conditions.join(' AND ');
       query += ` ORDER BY cvss DESC, created_at DESC LIMIT 50`;
 
       const results = db.exec(query, params);
@@ -259,7 +275,9 @@ async function startServer() {
             request: obj.evidence_request,
             response: obj.evidence_response,
             authContext: 'Audit de sécurité réseau',
-            roundtripMs: 25,
+            // Doctrine « zéro simulation » : on ne fabrique plus de latence
+            // factice. roundtripMs n'est pas persisté en base (la table findings
+            // n'a pas de colonne dédiée) — on l'omet plutôt que d'inventer 25.
             nonDestructiveProof: true,
           },
           impact: obj.impact,
@@ -292,30 +310,26 @@ async function startServer() {
   });
 
   // Desktop Packaging API - Download GuymaCyb-Setup-v1.0.0.exe Windows Installer
+  // Doctrine « zéro simulation » : on NE GÉNÈRE PLUS de stub .exe factice
+  // (l'ancien code retournait un buffer de 64 octets avec juste l'en-tête MZ,
+  // ce qui donnait l'illusion d'un téléchargement valide). Le vrai installateur
+  // de ~180 Mo est produit par GitHub Actions (workflow build-windows.yml) et
+  // téléchargeable depuis l'onglet Actions du dépôt. Ici on renvoie une réponse
+  // JSON explicite indiquant que le build n'est pas disponible depuis l'app.
   app.get('/api/desktop/download-installer', (_req, res) => {
-    try {
-      const exeBuffer = getOrCreateInstallerExeBuffer();
-      res.setHeader('Content-Type', 'application/vnd.microsoft.portable-executable');
-      res.setHeader('Content-Disposition', 'attachment; filename="GuymaCyb-Setup-v1.0.0.exe"');
-      res.setHeader('Content-Length', exeBuffer.length);
-      res.send(exeBuffer);
-    } catch (err: any) {
-      console.error('[Guyma Cyb Packaging] Error generating installer:', err);
-      res.status(500).send('Erreur lors de la génération de l\'installateur');
-    }
+    res.status(501).json({
+      error: 'Build non disponible depuis l\'application.',
+      reason: 'Le vrai installateur Windows (GuymaCyb-Setup-v1.0.0.exe, ~180 Mo) est produit par GitHub Actions, pas par cette API. Un ancien code générait un stub .exe factice de 64 octets — supprimé (doctrine zéro simulation).',
+      howToGet: 'Téléchargez-le depuis l\'onglet Actions du dépôt GitHub : https://github.com/guylainboka/guymacyb/actions — ou build-le localement avec desktop\\build-windows-exe.bat sur Windows.',
+    });
   });
 
-  // Desktop Packaging API - Download GuymaCyb-Portable-v1.0.0 Bundle
   app.get('/api/desktop/download-portable', (_req, res) => {
-    try {
-      const exeBuffer = getOrCreateInstallerExeBuffer();
-      res.setHeader('Content-Type', 'application/zip');
-      res.setHeader('Content-Disposition', 'attachment; filename="GuymaCyb-Portable-v1.0.0.zip"');
-      res.send(exeBuffer);
-    } catch (err: any) {
-      console.error('[Guyma Cyb Packaging] Error generating portable bundle:', err);
-      res.status(500).send('Erreur lors de la génération du bundle');
-    }
+    res.status(501).json({
+      error: 'Bundle portable non disponible depuis l\'application.',
+      reason: 'Idem que download-installer — le vrai bundle est produit par le build Windows, pas par cette API.',
+      howToGet: 'Voir https://github.com/guylainboka/guymacyb/actions',
+    });
   });
 
   // ============================================================
@@ -678,15 +692,23 @@ async function startServer() {
   });
 
   // Dashboard — statistiques agrégées depuis SQLite (compteurs + derniers 5)
+  // Doctrine « zéro simulation » : on EXCLUT systématiquement les entrées du
+  // laboratoire d'attaques (target-lab-sandbox / shadowscan-lab.internal /
+  // scans 'lab-%' / 'SCAN-LAB-%' / 'SCAN-WIFI-LAB-%') pour que le dashboard
+  // ne reflète QUE les vrais scans de cibles réelles.
   app.get('/api/dashboard/stats', async (_req, res) => {
     try {
       const db = await getDatabase();
-      const targetCount = Number(db.exec('SELECT COUNT(*) FROM targets')[0]?.values[0]?.[0] || 0);
-      const scanCount = Number(db.exec('SELECT COUNT(*) FROM scans')[0]?.values[0]?.[0] || 0);
-      const findingsCount = Number(db.exec('SELECT COUNT(*) FROM findings')[0]?.values[0]?.[0] || 0);
+      const LAB_TARGET_CLAUSE = `id != 'target-lab-sandbox' AND url NOT LIKE '%shadowscan-lab.internal%'`;
+      const LAB_SCAN_CLAUSE = `id NOT LIKE 'lab-%' AND id NOT LIKE 'SCAN-LAB-%' AND id NOT LIKE 'SCAN-WIFI-LAB-%'`;
+      const LAB_FINDING_CLAUSE = `scan_id NOT LIKE 'lab-%' AND scan_id NOT LIKE 'SCAN-LAB-%' AND scan_id NOT LIKE 'SCAN-WIFI-LAB-%' AND target_url NOT LIKE '%shadowscan-lab.internal%'`;
+
+      const targetCount = Number(db.exec(`SELECT COUNT(*) FROM targets WHERE ${LAB_TARGET_CLAUSE}`)[0]?.values[0]?.[0] || 0);
+      const scanCount = Number(db.exec(`SELECT COUNT(*) FROM scans WHERE ${LAB_SCAN_CLAUSE}`)[0]?.values[0]?.[0] || 0);
+      const findingsCount = Number(db.exec(`SELECT COUNT(*) FROM findings WHERE ${LAB_FINDING_CLAUSE}`)[0]?.values[0]?.[0] || 0);
 
       // Findings par sévérité (CRITICAL / HIGH / MEDIUM / LOW / INFO + autres)
-      const sevRes = db.exec("SELECT severity, COUNT(*) FROM findings GROUP BY severity");
+      const sevRes = db.exec(`SELECT severity, COUNT(*) FROM findings WHERE ${LAB_FINDING_CLAUSE} GROUP BY severity`);
       const bySeverity: Record<string, number> = { CRITICAL: 0, HIGH: 0, MEDIUM: 0, LOW: 0, INFO: 0 };
       if (sevRes[0]) {
         for (const row of sevRes[0].values) {
@@ -697,10 +719,10 @@ async function startServer() {
         }
       }
 
-      // 5 derniers findings
+      // 5 derniers findings (excluant le lab)
       const recentFindingsRes = db.exec(
         `SELECT id, target_url, title, severity, cvss, created_at
-         FROM findings ORDER BY created_at DESC LIMIT 5`
+         FROM findings WHERE ${LAB_FINDING_CLAUSE} ORDER BY created_at DESC LIMIT 5`
       );
       const recentFindings: any[] = [];
       if (recentFindingsRes[0]) {
@@ -712,10 +734,10 @@ async function startServer() {
         }
       }
 
-      // 5 dernières targets
+      // 5 dernières targets (excluant le lab)
       const recentTargetsRes = db.exec(
         `SELECT id, url, domain, scope, status, last_scanned_at
-         FROM targets ORDER BY last_scanned_at DESC LIMIT 5`
+         FROM targets WHERE ${LAB_TARGET_CLAUSE} ORDER BY last_scanned_at DESC LIMIT 5`
       );
       const recentTargets: any[] = [];
       if (recentTargetsRes[0]) {

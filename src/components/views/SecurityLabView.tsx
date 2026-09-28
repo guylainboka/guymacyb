@@ -72,36 +72,13 @@ export const SecurityLabView: React.FC<SecurityLabViewProps> = ({
           ? `[VULNÉRABILITÉ CONFIRMÉE] Preuve non-destructive qualifiée pour ${selectedVector.name} !`
           : `[DÉFENSE VALIDÉE] Attaque neutralisée avec succès par les règles de durcissement.`
       );
-    } catch {
-      // Fallback local en cas de déconnexion momentanée
-      const mockResult: LabSimulationResult = {
-        vectorId: selectedVector.id,
-        vectorName: selectedVector.name,
-        timestamp: new Date().toLocaleTimeString(),
-        targetMode: mode,
-        status: mode === 'vulnerable' ? 'VULNERABLE' : 'PROTECTED',
-        httpStatus: mode === 'vulnerable' ? 200 : 403,
-        durationMs: 45,
-        probeSent: selectedVector.safeTestPayload,
-        responsePreview: mode === 'vulnerable' ? selectedVector.vulnerableResponseSample : selectedVector.remediatedResponseSample,
-        wafIntercepted: mode === 'remediated',
-        securityObservations: mode === 'vulnerable'
-          ? [
-              'Exécution confirmée du payload sans assainissement.',
-              selectedVector.vulnerableBehaviorExplanation,
-              'Preuve qualifiée et prête pour le rapport.',
-            ]
-          : [
-              'Interception active par le WAF / filtre défensif.',
-              selectedVector.remediatedBehaviorExplanation,
-              'Poste défensif validé.',
-            ],
-      };
-      setSimulationHistory((prev) => ({
-        ...prev,
-        [`${selectedVector.id}-${mode}`]: mockResult,
-      }));
-      showToast(`Simulation exécutée en mode bac à sable local (${mode}).`);
+    } catch (err: any) {
+      // Doctrine « zéro simulation » : l'ancien code générait un mockResult
+      // local (durationMs: 45, observations hardcodées, status VULNERABLE) et
+      // l'affichait comme si la simulation avait réussi — un faux succès
+      // dangereux pour un outil de sécurité. On affiche désormais honnêtement
+      // l'échec (comme le fait déjà le WiFi lab).
+      showToast(`Échec de la simulation : API injoignable`);
     } finally {
       setIsSimulating(false);
     }

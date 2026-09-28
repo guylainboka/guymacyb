@@ -1033,3 +1033,53 @@ Stage Summary:
 - Fix minimal et ciblé : 2 fichiers modifiés (server.ts : import dynamique + commentaire ; build-server-bundle.js : commentaire corrigé). Aucune réécriture, aucun fichier supprimé.
 - Le bundle dist-server/server.cjs est autonome : 0 référence à vite, 0 dépendance runtime vers node_modules. L'app Electron embarque uniquement server.cjs + sql-wasm.wasm + dist/ (frontend) + shadowscan-core.exe (Rust) + security-scripts/.
 - Smoke test end-to-end validé : serveur démarre, /api/health répond UP, /api/core/status répond le statut réel, frontend servi correctement en production.
+
+---
+Task ID: ZERO-SIMULATION-1
+Agent: main (Z.ai Code) + sous-agent CLEAN-FRONTEND-1
+Task: Transformation du prototype en vrai logiciel — appliquer la doctrine « zéro simulation » PARTOUT dans l'application (pas seulement dashboard + labo). Audit exhaustif puis suppression/remplacement de toutes les données fictives, faux succès, Math.random, fallbacks silencieux.
+
+Work Log:
+- AUDIT-1 (sous-agent Explore) : inventaire exhaustif → 47 simulations identifiées sur 14 fichiers. Rapport complet dans AUDIT-SIMULATIONS.md. Top 3 critiques : (1) handleStartAttackConfirmed = setTimeout(4500) + « 3 vulnérabilités confirmées » sans appel backend ; (2) Header.tsx fausse télémétrie CPU/RAM/Threads via Math.random « to feel like a real native engine » ; (3) mockSecurityData.ts 515 lignes de données fictives pré-chargées au démarrage.
+- Phase 1a — Données fictives supprimées :
+  * src/server/db.ts : supprimé le seed de 3 cibles fictives (api.internal-cloud.io / stage-auth / payment-gateway) insérées au premier lancement.
+  * src/App.tsx : imports de mockSecurityData supprimés ; states (historicalTargets, endpointsTree, findings, testFamilies, terminalLogs) initialisés à [] (vide) — l'utilisateur voit un dashboard honnête jusqu'au premier vrai scan.
+  * src/data/mockSecurityData.ts : fichier SUPPRIMÉ (515 lignes de cibles/endpoints/findings/logs fictifs horodatés 14:22:01-35, plus référencé nulle part).
+- Phase 1b — Faux succès UI remplacés (agent principal + sous-agent CLEAN-FRONTEND-1) :
+  * App.tsx handleStartAttackConfirmed : supprimé setTimeout(4500) + message « 3 vulnérabilités confirmées » + 2 logs factices. Remplacé par message honnête « Tests actifs non implémentés » + log WARN.
+  * Header.tsx : supprimé setInterval(Math.random) pour cpuUsage/ramUsage. Remplacé par polling backend réel /api/core/status (memoryMb) + /api/health (threads = os.cpus().length) toutes les 5s. Valeurs null affichées « — » si backend injoignable.
+  * AnalyseWebView.tsx : 12 KPI hardcodés (137/42/9/21, IP 192.0.2.42, Nginx/1.24.0) remplacés par valeurs dérivées d'endpointsTree + findings (props). Ajout prop findings. Bandeau « Aucun scan effectué » si vide.
+  * ActiveTestsView.tsx : fausse barre de progression setInterval supprimée ; « Workers: 4 / Rate: 42 req/s » supprimés ; breadcrumb 137 pts/42 APIs dérivé des props ; « 21 preuves » → findings.length. Bandeau « fonctionnalité non configurée ».
+  * ReportRemediationView.tsx : rapport factice REP-20240524-EXM/CVSS 7.4/3H-7M-11L/SHA-256 8fa09 supprimé. Remplacé par vraies valeurs dérivées de findings (prop ajoutée) + SHA-256 réel via crypto.subtle.digest. Bandeau « remédiations génériques ».
+  * ResultsEvidenceView.tsx : handleRetest setTimeout(900ms) + « Exploitable à 100% » supprimé. Remplacé par vrai fetch /api/findings/{id}/retest avec gestion 404 « Re-test non configuré ».
+  * SecurityLabView.tsx : bloc mockResult dans le catch supprimé → showToast('Échec API injoignable') comme le WiFi lab.
+  * ScannerReconView.tsx : « 137 Endpoints / 9 Technologies » → « Cartographie passive ».
+  * Sidebar.tsx : badge hardcodé « 137 URI » supprimé.
+- Phase 1c — Séparation labo / findings réels (backend) :
+  * server.ts /api/targets : WHERE exclut target-lab-sandbox + shadowscan-lab.internal.
+  * server.ts /api/findings : WHERE exclut scan_id LIKE 'lab-%'/'SCAN-LAB-%'/'SCAN-WIFI-LAB-%' + target_url NOT LIKE '%shadowscan-lab.internal%'.
+  * server.ts /api/dashboard/stats : 3 clauses LAB_TARGET_CLAUSE / LAB_SCAN_CLAUSE / LAB_FINDING_CLAUSE appliquées sur tous les COUNT + recentFindings + recentTargets.
+  * server.ts /api/findings : roundtripMs:25 hardcodé supprimé (non persisté en base → omis).
+  * server.ts /api/desktop/download-installer + download-portable : stub .exe de 64 octets supprimé. Remplacé par HTTP 501 + JSON explicite (« Build non disponible, voir GitHub Actions »). Import getOrCreateInstallerExeBuffer supprimé.
+- Phase 1d — Nettoyage scripts :
+  * security-scripts/wifi-scan.sh : fonction morte builtin_networks() (8 faux SSIDs FreeWifi/Livebox/Bbox) SUPPRIMÉE. Commentaires « builtin-simulated mode produces 6-8 realistic networks » et « Fall through to builtin-simulated » mis à jour pour refléter la doctrine zéro simulation.
+- Vérifications locales :
+  * npx tsc --noEmit → 0 erreur
+  * npx vite build → OK (43 modules, 592 ms)
+  * node desktop/build-server-bundle.js → OK (server.cjs 1.46 MB, 0 require('vite'))
+  * Smoke test backend (base SQLite fraîche, sans node_modules) :
+    - GET /api/dashboard/stats → {targets:0, scans:0, findings:0, recentFindings:[], recentTargets:[]} (VIDE = zéro simulation)
+    - GET /api/targets → []
+    - GET /api/findings → []
+    - GET /api/desktop/download-installer → HTTP 501 + JSON error (plus de stub .exe)
+    - Serveur démarre proprement, aucune erreur.
+
+Stage Summary:
+- 47 simulations corrigées sur 13 fichiers modifiés + 2 fichiers supprimés (mockSecurityData.ts, builtin_networks).
+- Doctrine « zéro simulation » appliquée PARTOUT : dashboard, labo d'attaques, analyse web, tests actifs, rapports, evidence hub, télémétrie header, packaging, scripts WiFi.
+- Dashboard honnête : au premier lancement, tout est à 0/vide. Les données n'apparaissent qu'après un vrai scan.
+- Findings du labo isolés du dashboard (filtrage SQL scan_id LIKE 'lab-%' / target_url LIKE '%shadowscan-lab.internal%').
+- Télémétrie header réelle (backend /api/core/status + /api/health) au lieu de Math.random.
+- Tests actifs + re-test marqués « non configuré » (en attendant les vraies API).
+- 5 fonctionnalités marquées « NON CONFIGURÉ » (tests actifs, re-test, packaging download, ...) plutôt que simulées — conformément à la règle « 5 fonctionnalités réelles plutôt que 50 simulées ».
+- Build CI attendu vert (tsc + vite + bundle validés localement).

@@ -1,9 +1,11 @@
 import React, { useState, useEffect, useRef } from 'react';
-import { ActiveTestFamily, TerminalLog } from '../../types';
+import { ActiveTestFamily, TerminalLog, EndpointItem, Finding } from '../../types';
 
 interface ActiveTestsViewProps {
   testFamilies: ActiveTestFamily[];
   terminalLogs: TerminalLog[];
+  endpointsTree: EndpointItem[];
+  findings: Finding[];
   isTesting: boolean;
   onStopTest: () => void;
   onStartTest: () => void;
@@ -16,6 +18,8 @@ interface ActiveTestsViewProps {
 export const ActiveTestsView: React.FC<ActiveTestsViewProps> = ({
   testFamilies,
   terminalLogs,
+  endpointsTree,
+  findings,
   isTesting,
   onStopTest,
   onStartTest,
@@ -24,8 +28,11 @@ export const ActiveTestsView: React.FC<ActiveTestsViewProps> = ({
   safeMode,
   setSafeMode,
 }) => {
-  const [selectedFamily, setSelectedFamily] = useState<ActiveTestFamily>(testFamilies[2]); // Default B.A.C.
-  const [progress, setProgress] = useState<number>(0);
+  // Sélecteur de famille : on évite testFamilies[2] qui pourrait être
+  // undefined lorsque la liste est vide (état initial « zéro simulation »).
+  const [selectedFamily, setSelectedFamily] = useState<ActiveTestFamily | null>(
+    testFamilies[0] ?? null
+  );
   const [logFilter, setLogFilter] = useState<string>('');
   const [autoScroll, setAutoScroll] = useState<boolean>(true);
   const terminalEndRef = useRef<HTMLDivElement>(null);
@@ -37,20 +44,12 @@ export const ActiveTestsView: React.FC<ActiveTestsViewProps> = ({
     }
   }, [terminalLogs, autoScroll]);
 
-  // Simulate progress advance during active test
+  // Resynchronise la famille sélectionnée quand la liste change (nouveau scan).
   useEffect(() => {
-    if (!isTesting) return;
-    // Repart de zéro à chaque nouveau lancement (l'ancien code gardait la
-    // valeur précédente, donc la barre restait collée à 100 %).
-    setProgress(0);
-    const interval = setInterval(() => {
-      setProgress((prev) => {
-        if (prev >= 100) return 100;
-        return prev + 1;
-      });
-    }, 400);
-    return () => clearInterval(interval);
-  }, [isTesting]);
+    if (!testFamilies.some((f) => f.id === selectedFamily?.id)) {
+      setSelectedFamily(testFamilies[0] ?? null);
+    }
+  }, [testFamilies, selectedFamily]);
 
   const filteredLogs = terminalLogs.filter((l) => {
     if (!logFilter) return true;
@@ -60,6 +59,21 @@ export const ActiveTestsView: React.FC<ActiveTestsViewProps> = ({
 
   return (
     <div className="flex-1 overflow-y-auto p-5 flex flex-col gap-5 font-sans">
+      {/* Bandeau « fonctionnalité non configurée » — doctrine zéro simulation */}
+      <div className="bg-[#93000a]/15 border border-[#ffb4ab]/40 rounded-lg p-4 flex items-start gap-3 font-mono text-xs">
+        <span className="material-symbols-outlined text-[20px] text-[#ffb4ab] shrink-0">warning</span>
+        <div className="flex-1">
+          <strong className="text-[#ffb4ab] block mb-0.5">Tests actifs : fonctionnalité non configurée</strong>
+          <span className="text-[#dfe2f1]">
+            Aucune sonde n'est lancée actuellement. L'implémentation d'une vraie API{' '}
+            <code className="text-[#4cd7f6]">/api/tests/active/run</code> est prévue pour exécuter de
+            réelles séquences de tests non-destructifs. En attendant, cette vue reste un tableau de
+            bord honnête : elle affiche uniquement les données déjà collectées par l'analyse passive
+            et les findings qualifiés.
+          </span>
+        </div>
+      </div>
+
       {/* Header Strip & Emergency Stop */}
       <div className="bg-[#171b26] border border-[#24314c] rounded-lg p-4 flex flex-wrap items-center justify-between gap-4 shadow-sm font-mono text-xs">
         <div className="flex items-center gap-3">
@@ -79,11 +93,9 @@ export const ActiveTestsView: React.FC<ActiveTestsViewProps> = ({
           </div>
 
           <div className="flex items-center gap-3 text-[#c2c6d6]">
-            <span>Progression: <strong className="text-white">{progress}%</strong></span>
+            <span>Workers: <strong className="text-white">Non configuré</strong></span>
             <span className="text-[#424754]">|</span>
-            <span>Workers: 4 threads</span>
-            <span className="text-[#424754]">|</span>
-            <span className="text-[#4cd7f6]">Rate: 42 req/s</span>
+            <span>Rate: <strong className="text-white">Non configuré</strong></span>
           </div>
         </div>
 
@@ -144,12 +156,12 @@ export const ActiveTestsView: React.FC<ActiveTestsViewProps> = ({
           <span className="text-[#424754]">→</span>
           <div className="flex items-center gap-1.5 text-[#10b981]">
             <span className="material-symbols-outlined text-[15px]">check_circle</span>
-            <span>2. DISCOVERY (137 pts)</span>
+            <span>2. DISCOVERY ({endpointsTree.length} pts)</span>
           </div>
           <span className="text-[#424754]">→</span>
           <div className="flex items-center gap-1.5 text-[#10b981]">
             <span className="material-symbols-outlined text-[15px]">check_circle</span>
-            <span>3. CLASSIFICATION (42 APIs)</span>
+            <span>3. CLASSIFICATION ({findings.length} APIs)</span>
           </div>
           <span className="text-[#424754]">→</span>
           <div className="flex items-center gap-1.5 text-[#4cd7f6] font-bold">
@@ -185,7 +197,7 @@ export const ActiveTestsView: React.FC<ActiveTestsViewProps> = ({
 
           <div className="flex-1 overflow-y-auto p-3 flex flex-col gap-2 font-mono text-xs">
             {testFamilies.map((family) => {
-              const isSelected = selectedFamily.id === family.id;
+              const isSelected = selectedFamily?.id === family.id;
               return (
                 <div
                   key={family.id}
@@ -226,7 +238,7 @@ export const ActiveTestsView: React.FC<ActiveTestsViewProps> = ({
           </div>
 
           {/* Selected Evidence Trace Drawer */}
-          {selectedFamily.evidenceTrace && (
+          {selectedFamily?.evidenceTrace && (
             <div className="p-3 bg-[#0a0e18] border-t border-[#24314c] font-mono text-[11px] flex flex-col gap-1.5">
               <div className="flex items-center justify-between text-[#ffb4ab] font-bold">
                 <span className="flex items-center gap-1.5">
@@ -327,7 +339,7 @@ export const ActiveTestsView: React.FC<ActiveTestsViewProps> = ({
               onClick={onGoToResults}
               className="text-[#4cd7f6] hover:underline flex items-center gap-1"
             >
-              <span>Voir les 21 preuves qualifiées dans l'Evidence Hub</span>
+              <span>Voir les {findings.length} preuves qualifiées dans l'Evidence Hub</span>
               <span className="material-symbols-outlined text-[13px]">arrow_forward</span>
             </button>
           </div>

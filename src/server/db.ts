@@ -132,18 +132,13 @@ function initTables(db: Database) {
     );
   `);
 
-  // Seed default sample target if table is empty
-  const countRes = db.exec("SELECT COUNT(*) as cnt FROM targets");
-  const count = countRes[0]?.values[0]?.[0] as number || 0;
-  if (count === 0) {
-    db.run(`
-      INSERT INTO targets (id, url, domain, scope, operator_id, created_at, last_scanned_at, status)
-      VALUES 
-        ('t-1', 'https://api.internal-cloud.io', 'api.internal-cloud.io', 'wildcard', 'SEC-OPS-0982', datetime('now', '-2 hours'), datetime('now', '-2 hours'), 'COMPLETED'),
-        ('t-2', 'https://stage-auth.corporation.com', 'stage-auth.corporation.com', 'strict', 'SEC-OPS-0982', datetime('now', '-1 day'), datetime('now', '-1 day'), 'COMPLETED'),
-        ('t-3', 'https://payment-gateway.node12.org', 'payment-gateway.node12.org', 'strict', 'SEC-OPS-0982', datetime('now', '-5 days'), datetime('now', '-5 days'), 'COMPLETED');
-    `);
-  }
+  // Doctrine « zéro simulation » : on ne peuple PLUS la base avec des cibles
+  // fictives au premier lancement. L'utilisateur démarre avec une base vide
+  // et un dashboard honnête (« Aucune donnée disponible »). Les cibles
+  // historiques n'apparaissent qu'après un vrai scan.
+  // (Anciennement : 3 cibles fictives api.internal-cloud.io / stage-auth /
+  // payment-gateway insérées ici — supprimées car elles donnaient l'illusion
+  // qu'un audit avait déjà été effectué.)
 }
 
 export function saveDatabaseToDisk(db?: Database) {

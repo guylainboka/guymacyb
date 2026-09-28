@@ -1,12 +1,5 @@
 import React, { useState } from 'react';
-import { ModuleView, TargetConfig, HistoricalTarget, TerminalLog } from './types';
-import {
-  INITIAL_HISTORICAL_TARGETS,
-  INITIAL_ENDPOINTS_TREE,
-  INITIAL_FINDINGS,
-  INITIAL_TEST_FAMILIES,
-  INITIAL_TERMINAL_LOGS,
-} from './data/mockSecurityData';
+import { ModuleView, TargetConfig, HistoricalTarget, TerminalLog, Finding, EndpointItem, ActiveTestFamily } from './types';
 import { Header } from './components/common/Header';
 import { Sidebar } from './components/common/Sidebar';
 import { Footer } from './components/common/Footer';
@@ -32,7 +25,6 @@ import { WifiReseauView } from './components/views/WifiReseauView';
 import { CoursNotionsView } from './components/views/CoursNotionsView';
 import { LaboratoireWifiView } from './components/views/LaboratoireWifiView';
 import { TerminalView } from './components/views/TerminalView';
-import { Finding } from './types';
 
 export default function App() {
   const [currentView, setCurrentView] = useState<ModuleView>('dashboard');
@@ -50,11 +42,16 @@ export default function App() {
   const [isTesting, setIsTesting] = useState<boolean>(false);
   const [engineStatus, setEngineStatus] = useState<string>('Prêt pour évaluation');
 
-  const [historicalTargets, setHistoricalTargets] = useState<HistoricalTarget[]>(INITIAL_HISTORICAL_TARGETS);
-  const [endpointsTree, setEndpointsTree] = useState(INITIAL_ENDPOINTS_TREE);
-  const [findings, setFindings] = useState(INITIAL_FINDINGS);
-  const [testFamilies] = useState(INITIAL_TEST_FAMILIES);
-  const [terminalLogs, setTerminalLogs] = useState<TerminalLog[]>(INITIAL_TERMINAL_LOGS);
+  // Doctrine « zéro simulation » : tous les états démarrent VIDES. Aucune
+  // donnée fictive n'est chargée au démarrage — l'utilisateur voit un
+  // tableau de bord honnête (« Aucune donnée disponible ») jusqu'à ce qu'il
+  // lance un vrai scan. Les cibles/findings/endpoints réels proviennent du
+  // backend SQLite via le useEffect ci-dessous.
+  const [historicalTargets, setHistoricalTargets] = useState<HistoricalTarget[]>([]);
+  const [endpointsTree, setEndpointsTree] = useState<EndpointItem[]>([]);
+  const [findings, setFindings] = useState<Finding[]>([]);
+  const [testFamilies] = useState<ActiveTestFamily[]>([]);
+  const [terminalLogs, setTerminalLogs] = useState<TerminalLog[]>([]);
 
   // Modals state
   const [isAuthModalOpen, setIsAuthModalOpen] = useState<boolean>(false);
@@ -85,7 +82,9 @@ export default function App() {
         }
       } catch (err: any) {
         if (err?.name === 'AbortError') return; // composant démonté — ignore
-        console.warn('Backend SQLite not yet queried, using default in-memory dataset:', err);
+        // Doctrine « zéro simulation » : on n'affiche plus de fallback implicite.
+        // Le dashboard reste vide jusqu'à un vrai scan réussi.
+        console.warn('Backend SQLite non joignable (les données réelles seront chargées au prochain scan) :', err);
       }
     }
     loadSqliteData();
@@ -169,43 +168,25 @@ export default function App() {
   };
 
   // Start confirmed active test
+  // Doctrine « zéro simulation » : l'ancien code simulait une suite de tests
+  // actifs via un setTimeout(4500ms) puis affichait « 3 vulnérabilités
+  // confirmées » SANS AUCUN appel backend. C'était un mensonge dangereux dans
+  // un outil de sécurité. En attendant l'implémentation d'une vraie API
+  // `/api/tests/active/run` (exécutant de vraies sondes contrôlées), on
+  // affiche honnêtement que la fonctionnalité n'est pas encore implémentée.
   const handleStartAttackConfirmed = () => {
-    setIsTesting(true);
-    setEngineStatus('Tests actifs contrôlés en cours (4 workers)...');
+    setIsAuthModalOpen(false);
+    setEngineStatus('Tests actifs : fonctionnalité non configurée');
+    setTerminalLogs((prev) => [
+      ...prev,
+      {
+        id: String(Date.now()),
+        timestamp: new Date().toLocaleTimeString(),
+        tag: 'WARN',
+        text: `Tests actifs non implémentés — aucune sonde lancée sur ${targetConfig.url}. La fonctionnalité sera disponible après l'ajout de l'API /api/tests/active/run.`,
+      },
+    ]);
     setCurrentView('tests-actifs-and-attaque');
-
-    // Dynamically append realistic audit logs
-    const newLogs: TerminalLog[] = [
-      {
-        id: String(Date.now() + 1),
-        timestamp: new Date().toLocaleTimeString(),
-        tag: 'SYSTEM',
-        text: `Starting controlled active test suite against ${targetConfig.url} (Safe Mode: ${
-          safeMode ? 'ON' : 'OFF'
-        })`,
-      },
-      {
-        id: String(Date.now() + 2),
-        timestamp: new Date().toLocaleTimeString(),
-        tag: 'ACTIVE',
-        text: 'Dispatching contextual non-destructive probes to 42 API endpoints...',
-      },
-    ];
-    setTerminalLogs((prev) => [...prev, ...newLogs]);
-
-    setTimeout(() => {
-      setIsTesting(false);
-      setEngineStatus('Tests actifs complétés • 3 vulnérabilités confirmées');
-      setTerminalLogs((prev) => [
-        ...prev,
-        {
-          id: String(Date.now() + 3),
-          timestamp: new Date().toLocaleTimeString(),
-          tag: 'VALIDATION',
-          text: 'Suite active completed. All findings committed to SQLite shadow_findings.db.',
-        },
-      ]);
-    }, 4500);
   };
 
   const handleStopTest = () => {
@@ -284,6 +265,7 @@ export default function App() {
           {currentView === 'analyse-web' && (
             <AnalyseWebView
               endpointsTree={endpointsTree}
+              findings={findings}
               onTransferToAttack={() => {
                 setCurrentView('tests-actifs-and-attaque');
                 handleStartAttackConfirmed();
@@ -297,6 +279,8 @@ export default function App() {
             <ActiveTestsView
               testFamilies={testFamilies}
               terminalLogs={terminalLogs}
+              endpointsTree={endpointsTree}
+              findings={findings}
               isTesting={isTesting}
               onStopTest={handleStopTest}
               onStartTest={handleStartAttackConfirmed}
@@ -323,7 +307,7 @@ export default function App() {
           )}
 
           {currentView === 'rapport-and-remediation' && (
-            <ReportRemediationView targetConfig={targetConfig} />
+            <ReportRemediationView targetConfig={targetConfig} findings={findings} />
           )}
 
           {currentView === 'wifi-and-reseau' && (

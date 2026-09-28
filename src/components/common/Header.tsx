@@ -23,8 +23,13 @@ export const Header: React.FC<HeaderProps> = ({
   onOpenSettings,
   onOpenPackaging,
 }) => {
-  const [cpuUsage, setCpuUsage] = useState<number>(12);
-  const [ramUsage, setRamUsage] = useState<number>(410);
+  // VRAIE télémétrie moteur : on interroge le backend (/api/core/status +
+  // /api/health) toutes les 5s pour afficher la mémoire heap réelle et le
+  // nombre de threads/cœurs réellement disponibles. Doctrine « zéro
+  // simulation » : l'ancien code générait cpuUsage/ramUsage aléatoirement
+  // (Math.random) « to feel like a real native engine » — c'était un mensonge.
+  const [ramUsage, setRamUsage] = useState<number | null>(null);
+  const [threadsCount, setThreadsCount] = useState<number | null>(null);
   const [isScopeMenuOpen, setIsScopeMenuOpen] = useState<boolean>(false);
   const [isEditingTarget, setIsEditingTarget] = useState<boolean>(false);
   const [inputUrl, setInputUrl] = useState<string>(targetConfig.url);
@@ -43,19 +48,31 @@ export const Header: React.FC<HeaderProps> = ({
     return () => document.removeEventListener('fullscreenchange', onFsChange);
   }, []);
 
-  // Dynamic light telemetry fluctuation to feel like a real native engine
+  // Polling léger de la vraie télémétrie backend (toutes les 5s).
   useEffect(() => {
-    const timer = setInterval(() => {
-      setCpuUsage((prev) => {
-        const delta = Math.floor(Math.random() * 5) - 2;
-        return Math.max(8, Math.min(26, prev + delta));
-      });
-      setRamUsage((prev) => {
-        const delta = Math.floor(Math.random() * 3) - 1;
-        return Math.max(405, Math.min(425, prev + delta));
-      });
-    }, 3000);
-    return () => clearInterval(timer);
+    let cancelled = false;
+    async function refresh() {
+      try {
+        const [coreRes, healthRes] = await Promise.all([
+          fetch('/api/core/status'),
+          fetch('/api/health'),
+        ]);
+        if (cancelled) return;
+        if (coreRes.ok) {
+          const data = await coreRes.json();
+          if (typeof data.memoryMb === 'number') setRamUsage(data.memoryMb);
+        }
+        if (healthRes.ok) {
+          const data = await healthRes.json();
+          if (typeof data.threads === 'number') setThreadsCount(data.threads);
+        }
+      } catch {
+        // Backend injoignable — on laisse les valeurs à null → affichées « — »
+      }
+    }
+    refresh();
+    const timer = setInterval(refresh, 5000);
+    return () => { cancelled = true; clearInterval(timer); };
   }, []);
 
   const handleTargetSubmit = (e: React.FormEvent) => {
@@ -263,20 +280,16 @@ export const Header: React.FC<HeaderProps> = ({
           </div>
         </div>
 
-        {/* Live Engine Telemetry & Operator Profile */}
+        {/* Live Engine Telemetry & Operator Profile — VRAIES valeurs backend */}
         <div className="flex items-center gap-5">
           <div className="hidden lg:flex items-center gap-4 text-[#c2c6d6] font-mono text-xs">
-            <span className="flex items-center gap-1">
-              <span className="material-symbols-outlined text-[14px] text-[#4cd7f6]">memory</span>
-              CPU {cpuUsage}%
-            </span>
-            <span className="flex items-center gap-1">
+            <span className="flex items-center gap-1" title="Mémoire heap du backend (valeur réelle /api/core/status)">
               <span className="material-symbols-outlined text-[14px] text-[#3b82f6]">storage</span>
-              RAM {ramUsage}MB
+              RAM {ramUsage !== null ? `${ramUsage}MB` : '—'}
             </span>
-            <span className="flex items-center gap-1">
+            <span className="flex items-center gap-1" title="Nombre de cœurs CPU du backend (valeur réelle /api/health)">
               <span className="material-symbols-outlined text-[14px] text-[#10b981]">dynamic_form</span>
-              Threads: 8
+              Threads: {threadsCount !== null ? threadsCount : '—'}
             </span>
           </div>
 

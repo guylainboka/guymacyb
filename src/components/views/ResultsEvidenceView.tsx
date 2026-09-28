@@ -14,6 +14,7 @@ export const ResultsEvidenceView: React.FC<ResultsEvidenceViewProps> = ({
   const [severityFilter, setSeverityFilter] = useState<'ALL' | Severity>('ALL');
   const [isRetesting, setIsRetesting] = useState<boolean>(false);
   const [retestMessage, setRetestMessage] = useState<string | null>(null);
+  const [retestError, setRetestError] = useState<boolean>(false);
 
   // Resynchronise l'inspecteur quand la liste change (nouveau scan, preuve lab…)
   // — évite le crash `selectedFinding.id` sur une liste vide et les affichages
@@ -34,15 +35,48 @@ export const ResultsEvidenceView: React.FC<ResultsEvidenceViewProps> = ({
   const lowCount = findings.filter((f) => f.severity === 'LOW').length;
   const criticalCount = findings.filter((f) => f.severity === 'CRITICAL').length;
 
-  const handleRetest = () => {
+  // Re-test via backend réel — doctrine « zéro simulation » : l'ancien code
+  // simulait un succès après 900 ms (« Vulnérabilité toujours confirmée »
+  // « Exploitable à 100% ») sans aucun appel backend. C'était un faux succès
+  // dangereux. On appelle désormais la vraie API `/api/findings/{id}/retest`,
+  // qui n'existe pas encore — on affiche donc honnêtement l'erreur 404.
+  const handleRetest = async () => {
+    if (!selectedFinding) return;
     setIsRetesting(true);
-    setRetestMessage('Envoi de la sonde active de contre-vérification...');
-    setTimeout(() => {
-      setIsRetesting(false);
+    setRetestError(false);
+    setRetestMessage('Envoi de la sonde active de contre-vérification au moteur backend...');
+    try {
+      const res = await fetch(`/api/findings/${encodeURIComponent(selectedFinding.id)}/retest`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+      });
+      if (res.status === 404) {
+        setRetestError(true);
+        setRetestMessage(
+          `Re-test non configuré — API /api/findings/${selectedFinding.id}/retest non implémentée.`
+        );
+        return;
+      }
+      if (!res.ok) {
+        setRetestError(true);
+        setRetestMessage(`Échec du re-test — HTTP ${res.status} renvoyé par le moteur.`);
+        return;
+      }
+      const data = await res.json().catch(() => null);
+      setRetestError(false);
       setRetestMessage(
-        `Vérifié à ${new Date().toLocaleTimeString()} : Vulnérabilité toujours confirmée (Exploitable à 100%).`
+        `Re-test terminé à ${new Date().toLocaleTimeString()} : ${
+          data?.summary || 'le moteur a renvoyé une réponse sans champ summary.'
+        }`
       );
-    }, 900);
+    } catch (err: any) {
+      setRetestError(true);
+      setRetestMessage(
+        `Re-test non disponible — API injoignable : ${err?.message || 'erreur réseau'}.`
+      );
+    } finally {
+      setIsRetesting(false);
+    }
   };
 
   return (
@@ -173,6 +207,7 @@ export const ResultsEvidenceView: React.FC<ResultsEvidenceViewProps> = ({
                   onClick={() => {
                     setSelectedFinding(finding);
                     setRetestMessage(null);
+                    setRetestError(false);
                   }}
                   className={`p-3 rounded border transition-all cursor-pointer flex flex-col gap-2 ${
                     isSelected
@@ -257,8 +292,14 @@ export const ResultsEvidenceView: React.FC<ResultsEvidenceViewProps> = ({
           </div>
 
           {retestMessage && (
-            <div className="p-2.5 bg-[#0a0e18] border-b border-[#24314c] font-mono text-xs text-[#10b981] flex items-center gap-2">
-              <span className="material-symbols-outlined text-[16px]">verified</span>
+            <div
+              className={`p-2.5 bg-[#0a0e18] border-b border-[#24314c] font-mono text-xs flex items-center gap-2 ${
+                retestError ? 'text-[#ffb4ab]' : 'text-[#10b981]'
+              }`}
+            >
+              <span className="material-symbols-outlined text-[16px]">
+                {retestError ? 'error' : 'verified'}
+              </span>
               <span>{retestMessage}</span>
             </div>
           )}
