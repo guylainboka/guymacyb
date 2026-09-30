@@ -20,6 +20,9 @@ shadow_core.db
 shadow_core.db.bak
 *.db-journal
 
+# Worklog de développement interne (historique des agents — jamais publié)
+worklog.md
+
 # Outils installés en user-space (clonés via install-scripts, pas dans le repo)
 tools/nikto/
 tools/perl5/
@@ -31,9 +34,6 @@ tools/perl5/
 dev-keeper.sh
 relance.log
 
-# Worklog développement local
-/home/z/my-project/worklog.md
-
 # Code-signing secrets (NEVER commit)
 desktop/signing/*.key
 desktop/signing/*.pfx
@@ -44,7 +44,6 @@ desktop/signing/*.p12
 tool-results/
 agent-ctx/
 dev.log
-shadow_core.db
 
 # Autres artefacts sandbox
 download/

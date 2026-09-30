@@ -29,6 +29,22 @@ double-clic sur l'icône — et les outils Linux tournent en arrière-plan via W
 3. **État honnête** si le matériel manque (clé WiFi mode monitor) → message clair,
    données vides, **jamais de fausses données**
 
+## 🧭 Ce qui a été fait (journal des transformations)
+
+Le dépôt est passé d'un **prototype avec données fictives** à un **logiciel d'audit réel**.
+Les 4 phases, toutes commitées et vérifiables dans l'historique git :
+
+| Phase | Commit | Contenu |
+|---|---|---|
+| **0 — Vrai logiciel** | `2f652ac` | Suppression de `mockSecurityData.ts` (515 lignes de données fictives), du seed de 3 cibles fictives, de la télémétrie `Math.random` — l'app démarre **vide et honnête** ; les données n'apparaissent qu'après un vrai scan. Wizard WSL non bloquant, packaging réparé (`Cannot find module 'vite'` en prod). |
+| **1 — Zéro simulation** | `71821aa` | Les 9 derniers résidus de simulation éliminés (faux réseaux WiFi, faux findings du lab, IDs séquentiels réels, durées mesurées avec `Date.now()`, CVSS théorique assumé comme tel). Audit complet dans `AUDIT-SIMULATIONS.md`. |
+| **2 — Moteur 100 % réel** | `570e084` | Le labo web envoie de **vraies sondes** (SQLi, XSS, path traversal, SSRF, IDOR, JWT alg=none, rate-limiting, CORS) contre la vraie cible ; **suite de tests actifs réels** (8 familles + fuzzing 35 chemins + nikto réel) ; **re-test réel** de chaque finding (`CONFIRMED/RESOLVED`) ; attestation légale **ACTIVE/DESTRUCTIVE** vérifiée mot pour mot côté serveur ; endpoints WiFi factices → `410 Gone`. |
+| **3 — Durcissement** | `49e7078` | Attestation légale étendue à **6 outils WiFi réels** (monitor, handshake, crack, WPS, Evil Twin, MAC changer) ; **calculateur CVSS v3.1 vectoriel conforme FIRST** (base + temporel + environnemental, colonne `cvss_vector` en base) ; **Evil Twin réel automatisé** (hostapd + dnsmasq). |
+
+> Résultat : **0 occurrence** du mot « simulation » dans le code, **0 donnée fabriquée**,
+> score CVSS calculé et sévérité dérivée du score (impossible qu'ils divergent),
+> toute action réelle bloquée (HTTP 403) sans attestation légale journalisée.
+
 ## 📥 Télécharger le .exe Windows
 
 ### Option 1 — Build automatique GitHub Actions (le plus simple)
@@ -138,7 +154,7 @@ Bouton "Configurer plus tard" à chaque étape.
 | 📡 Scanner & Recon | ping, DNS, ports (nmap ou TCP built-in), WhatWeb, MTR, SSL/TLS | original |
 | 🌐 Analyse Web | en-têtes de sécurité, endpoints, findings | original |
 | 🖧 Réseau Local | découverte rootless mDNS/SSDP/NetBIOS/rDNS + scan TCP | StrykerOSS |
-| ⚡ Tests Actifs | suite active avec terminal live, Safe Mode | original |
+| ⚡ Tests Actifs | suite active réelle (8 familles, fuzzing 35 chemins, nikto) + terminal live | original |
 | 🧪 Lab Attaques Web | 8 vecteurs OWASP (SQLi, XSS, SSRF, IDOR, JWT, CORS…) | original |
 | 🛜 WiFi & Réseau | scan AP, audit WPA, détection deauth (aircrack-ng réel) | original |
 | 🔑 Handshakes | capture + crack WPA (airodump-ng/aircrack-ng) | StrykerOSS |
@@ -151,13 +167,13 @@ Bouton "Configurer plus tard" à chaque étape.
 | 📹 Cameradar | scan RTSP + credentials par défaut | StrykerOSS |
 | 🖥️ Terminal | bash/Termux, PowerShell, CMD, Python (exécution réelle) | original |
 | 📚 Cours & Notions | 14 notions (WEP→WPA3, OSI, KRACK, AES-CCMP…) | original |
-| ✅ Résultats & Preuves | findings, CVSS, preuves non destructives | original |
+| ✅ Résultats & Preuves | findings, CVSS v3.1 vectoriel, re-test réel (CONFIRMED/RESOLVED) | original |
 | 📝 Rapport & Remédiation | rapport consolidé, export SQLite/JSON | original |
 | ⚙️ Core Manager | statut WSL, outils installés/manquants, installation | StrykerOSS |
 
 ## 🛠️ Stack technique
 
-- **Frontend** : React 19, Vite 8, TypeScript 7, Tailwind CSS 4, Material Symbols
+- **Frontend** : React 19, Vite 8, TypeScript 5, Tailwind CSS 4, Material Symbols
 - **Backend** : Express 4, sql.js (SQLite WASM), esbuild (bundle production)
 - **Noyau scan** : Rust (shadowscan-core, pure-Rust HTTP/TLS) **OU** fallback Node réel
 - **Scripts sécurité** : Bash + Python (fallbacks natifs)
@@ -182,8 +198,11 @@ Azure Trusted Signing / SignPath (gratuit OSS). Voir `desktop/signing/README.md`
 
 ## 🔒 Principes défensifs & pas de simulation
 
-- Tout test actif requiert une **autorisation explicite** (modale d'autorisation)
-- **Safe Mode** bloque les sondes destructives
+- Toute sonde réseau réelle exige une **attestation légale** (modale obligatoire,
+  texte exact vérifié mot pour mot côté serveur, journalisation immuable)
+- Le commutateur **Safe Mode** (contrôlé par l'opérateur, défaut OFF) ne concerne
+  que la famille destructrice nikto — les 7 autres familles de tests actifs sont
+  réelles et exécutées dès l'attestation ACTIVE validée
 - **Aucune donnée simulée** : les 7 scripts WiFi ne génèrent plus de fausses SSID
   (FreeWifi_secure, Livebox…) — quand l'outil/hardware manque, un message honnête est retourné
 - Les scans de base (HTTP, ports, DNS, TLS, réseau local) fonctionnent **sans WSL**
@@ -260,6 +279,7 @@ Pour le scan WiFi temps réel : branchez une **clé USB WiFi mode monitor**
 
 ## 📖 Documentation
 
+- `AUDIT-SIMULATIONS.md` — audit complet de la doctrine « zéro simulation » (47 points corrigés)
 - `desktop/signing/README.md` — signature Authenticode détaillée
 - `desktop/README.md` — packaging Electron
 - `security-scripts/install-tools.sh --check` — vérifier les outils installés
