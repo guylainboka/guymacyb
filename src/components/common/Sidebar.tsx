@@ -20,9 +20,9 @@ export const Sidebar: React.FC<SidebarProps> = ({
 }) => {
   const navItems: { id: ModuleView; label: string; icon: string; badge?: string }[] = [
     {
-      id: 'dashboard',
-      label: 'Dashboard',
-      icon: 'dashboard',
+      id: 'accueil',
+      label: 'Accueil',
+      icon: 'home',
     },
     {
       id: 'scanner-and-recon',

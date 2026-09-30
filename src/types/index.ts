@@ -1,5 +1,5 @@
 export type ModuleView =
-  | 'dashboard'
+  | 'accueil'
   | 'scanner-and-recon'
   | 'analyse-web'
   | 'tests-actifs-and-attaque'

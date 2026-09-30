@@ -8,7 +8,7 @@ import { SettingsModal } from './components/common/SettingsModal';
 import { DocsModal } from './components/common/DocsModal';
 import { DesktopPackagingModal } from './components/common/DesktopPackagingModal';
 import { ScannerReconView } from './components/views/ScannerReconView';
-import { DashboardView } from './components/views/DashboardView';
+import { HomeView } from './components/views/HomeView';
 import { ReseauLocalView } from './components/views/ReseauLocalView';
 import { ArsenalView } from './components/views/ArsenalView';
 import { GeoMacView } from './components/views/GeoMacView';
@@ -27,7 +27,7 @@ import { LaboratoireWifiView } from './components/views/LaboratoireWifiView';
 import { TerminalView } from './components/views/TerminalView';
 
 export default function App() {
-  const [currentView, setCurrentView] = useState<ModuleView>('dashboard');
+  const [currentView, setCurrentView] = useState<ModuleView>('accueil');
   const [targetConfig, setTargetConfig] = useState<TargetConfig>({
     url: 'https://example.com',
     port: 443,
@@ -405,12 +405,8 @@ export default function App() {
             <TerminalView />
           )}
 
-          {currentView === 'dashboard' && (
-            <DashboardView
-              targetConfig={targetConfig}
-              findings={findings}
-              onSelectView={setCurrentView}
-            />
+          {currentView === 'accueil' && (
+            <HomeView onSelectView={setCurrentView} />
           )}
 
           {currentView === 'reseau-local' && (

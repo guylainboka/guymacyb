@@ -45,6 +45,44 @@ Les 4 phases, toutes commitées et vérifiables dans l'historique git :
 > score CVSS calculé et sévérité dérivée du score (impossible qu'ils divergent),
 > toute action réelle bloquée (HTTP 403) sans attestation légale journalisée.
 
+## 🏠 Accueil & intégration système Windows (nouveau)
+
+La vue d'accueil est un **hub de services** (plus de dashboard avec historique) :
+
+- **Statut système réel** : droits administrateur détectés (`net session` / `whoami`
+  sur Windows, `uid` sur Linux), matériel via **CIM/WMI** (`Get-CimInstance` — CPU,
+  RAM, disques, GPU, adaptateurs réseau, BIOS), WSL + outils détectés dynamiquement
+- **17 cartes de services** avec leur **vrai prérequis** (Prêt / Outils Linux requis /
+  WSL requis / WSL + clé WiFi monitor) — rien n'est déclaré disponible à tort
+- **Actions de maintenance** : re-détecter WSL, installer les outils Linux manquants
+  (chaque outil est ensuite **vérifié** `which` + `--version` et consigné dans le
+  **registre local** `<dataDir>/tools-registry/<outil>.json` — preuve réutilisable)
+
+### Pont WSL robuste (corrections majeures)
+
+1. **Décodage UTF-16LE** : `wsl.exe` écrit sa sortie en UTF-16LE avec BOM — l'ancien
+   décodage UTF-8 cassait le parsing (WSL "non détecté" alors qu'il est installé).
+   Désormais : Buffer brut → `toString('utf16le')` → strip BOM (stratégie confirmée
+   par la recherche web, cf. Millwright/VS Code).
+2. **Distro détecté dynamiquement** : le distro n'est plus codé en dur sur `Ubuntu`
+   (qui échoue avec `Ubuntu-22.04`, `Ubuntu-24.04`, `Debian`…) — l'astérisque de
+   `wsl -l -v` désigne le distro par défaut, utilisé partout (outils, terminal,
+   installation apt).
+3. **Cache + premier contact long** : le service WSL démarre à froid — détection
+   cachée 15 s, timeout de premier contact 30 s, raison honnête affichée en cas
+   d'échec (`/api/core/status → wsl.reason`).
+
+### Terminaux natifs par plateforme
+
+| Shell | Windows | Linux |
+|---|---|---|
+| **PowerShell** | `powershell.exe` NATIF (vraies API Windows) | `pwsh` si installé, sinon message honnête |
+| **CMD** | `cmd.exe` NATIF | message honnête (CMD n'existe que sur Windows) |
+| **bash / python** | via WSL (distro détecté) | natif |
+
+Garde-fous conservés : patterns destructeurs refusés (`rm -rf /`, fork bomb,
+`mkfs`, `format C:`…), timeout 30 s, exit code réel.
+
 ## 📥 Télécharger le .exe Windows
 
 ### Option 1 — Build automatique GitHub Actions (le plus simple)

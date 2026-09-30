@@ -19,6 +19,8 @@ import { spawn } from 'child_process';
 import path from 'path';
 import fs from 'fs';
 import { fileURLToPath } from 'url';
+import { getWslState, runInDistro, wslRun, IS_WINDOWS as WSL_IS_WINDOWS } from './wsl';
+import * as wsMod from './windowsSystem';
 
 const __filename = fileURLToPath(import.meta.url);
 const __dirname = path.dirname(__filename);
@@ -31,7 +33,11 @@ const SCRIPTS_DIR =
 
 // --- Configuration WSL (Windows) ---
 const IS_WINDOWS = process.platform === 'win32';
-const WSL_DISTRO = process.env.WSL_DISTRO || 'Ubuntu';
+// NOTE : le distro n'est PLUS codé en dur — la détection dynamique vit dans
+// wsl.ts (getWslState). `wsl --install` moderne installe souvent « Ubuntu-24.04 »
+// ou un autre nom ; l'ancien `wsl -d Ubuntu` codé en dur cassait TOUT (outils
+// « manquants », terminaux morts, installation impossible).
+const WSL_DISTRO_FALLBACK = process.env.WSL_DISTRO || 'Ubuntu';
 // Sur Windows, le chemin WSL-side des scripts (ex: /mnt/c/Users/.../security-scripts).
 // Si non défini, on tente une conversion automatique du chemin Windows -> /mnt/...
 const WSL_SCRIPTS_DIR = process.env.WSL_SCRIPTS_DIR || '';
@@ -52,22 +58,22 @@ function toWslPath(p: string): string {
 
 /**
  * Prépare la commande pour WSL si on est sur Windows et que la commande est bash.
- * Retourne { cmd, args } éventuellement wrappés en `wsl.exe -d <distro> -- bash <script>`.
+ * ASYNC : résout le distro par défaut DYNAMIQUEMENT (wsl.ts) au lieu du 'Ubuntu'
+ * codé en dur qui cassait sur les machines où le distro porte un autre nom.
  */
-function wrapForWsl(cmd: string, args: string[]): { cmd: string; args: string[] } {
+async function resolveCommand(cmd: string, args: string[]): Promise<{ cmd: string; args: string[] }> {
   if (!IS_WINDOWS) return { cmd, args };
   if (cmd === 'bash' || cmd.endsWith('.sh')) {
-    // Wrapping WSL : wsl.exe -d Ubuntu -- bash <script-path-wsl> <args...>
-    const wslArgs = ['-d', WSL_DISTRO, '--', 'bash'];
+    const state = await getWslState();
+    const distro = process.env.WSL_DISTRO || state.defaultDistro || WSL_DISTRO_FALLBACK;
+    // Wrapping WSL : wsl.exe -d <distro-détecté> -- bash <script-path-wsl> <args...>
+    const wslArgs = ['-d', distro, '--', 'bash'];
     if (cmd === 'bash') {
-      // args[0] est le script .sh
       const newArgs = [...args];
       if (newArgs[0]) newArgs[0] = toWslPath(newArgs[0]);
       return { cmd: 'wsl.exe', args: [...wslArgs, ...newArgs] };
-    } else {
-      // cmd est un script .sh directement
-      return { cmd: 'wsl.exe', args: [...wslArgs, toWslPath(cmd), ...args] };
     }
+    return { cmd: 'wsl.exe', args: [...wslArgs, toWslPath(cmd), ...args] };
   }
   return { cmd, args };
 }
@@ -89,10 +95,9 @@ async function exec(
   opts: ExecOptions = {}
 ): Promise<{ stdout: string; stderr: string; exitCode: number }> {
   const timeoutMs = opts.timeoutMs ?? 60_000;
-  // Wrapping WSL sur Windows pour les commandes bash/scripts
-  const wrapped = opts.forceWsl && IS_WINDOWS
-    ? wrapForWsl(cmd === 'wsl.exe' ? 'bash' : cmd, cmd === 'wsl.exe' ? args : [cmd, ...args])
-    : wrapForWsl(cmd, args);
+  // Wrapping WSL sur Windows pour les commandes bash/scripts (distro dynamique).
+  // Les appels directs à wsl.exe (cmd === 'wsl.exe') passent sans wrapping.
+  const wrapped = await resolveCommand(cmd, args);
   return new Promise((resolve) => {
     const child = spawn(wrapped.cmd, wrapped.args, {
       cwd: PROJECT_ROOT,
@@ -139,30 +144,19 @@ async function exec(
 //  Gestion WSL & statut Core (module Core Manager — StrykerOSS)
 // ============================================================
 
-/** Liste les distributions WSL installées (Windows uniquement). */
+/** Liste les distributions WSL installées (Windows uniquement) — via wsl.ts. */
 export async function listWslDistros(): Promise<
-  Array<{ name: string; state: string; version: string }>
+  Array<{ name: string; state: string; version: string; isDefault?: boolean }>
 > {
   if (!IS_WINDOWS) return [];
-  const res = await exec('wsl.exe', ['-l', '-v'], { timeoutMs: 8_000, forceWsl: false });
-  // wsl.exe n'est pas bash, ne pas wrapper — on l'appelle directement.
-  // (exec wrappera seulement si cmd==='bash'; ici cmd==='wsl.exe' donc pas wrappé)
-  const out = (res.stdout + res.stderr).replace(/\x1b\[[0-9;]*m/g, '').replace(/\0/g, '');
-  const lines = out.split('\n').map((l) => l.trim()).filter(Boolean);
-  const distros: Array<{ name: string; state: string; version: string }> = [];
-  for (const line of lines.slice(1)) {
-    const parts = line.split(/\s+/);
-    if (parts.length >= 3) {
-      distros.push({ name: parts[0], state: parts[1], version: parts[2] });
-    }
-  }
-  return distros;
+  const state = await getWslState();
+  return state.distros;
 }
 
-/** Vérifie si une commande/outils est installé (sur Linux direct, sur Windows via WSL). */
+/** Vérifie si un outil est installé (Linux direct, Windows via le distro DÉTECTÉ). */
 export async function whichTool(tool: string): Promise<string | null> {
   if (IS_WINDOWS) {
-    const res = await exec('wsl.exe', ['-d', WSL_DISTRO, '--', 'which', tool], { timeoutMs: 5_000 });
+    const res = await runInDistro(['which', tool], { timeoutMs: 8_000 });
     return res.exitCode === 0 ? res.stdout.trim() || tool : null;
   }
   const res = await exec('which', [tool], { timeoutMs: 5_000 });
@@ -173,7 +167,14 @@ export async function whichTool(tool: string): Promise<string | null> {
 export async function getCoreStatus(): Promise<{
   platform: string;
   isWindows: boolean;
-  wsl: { available: boolean; distros: any[]; defaultDistro: string | null };
+  wsl: {
+    available: boolean;
+    installed?: boolean;
+    version?: string;
+    reason?: string;
+    distros: any[];
+    defaultDistro: string | null;
+  };
   tools: { available: string[]; missing: string[] };
   python: string | null;
   node: string;
@@ -195,19 +196,20 @@ export async function getCoreStatus(): Promise<{
     })
   );
   const py = await whichTool('python3');
-  // Détection WSL RÉELLE : sur Windows, on considère WSL disponible uniquement si
-  // au moins une distro est listée ET démarre. L'ancien code renvoyait
-  // `available: IS_WINDOWS` (toujours vrai sur Windows même sans WSL) — mensonge.
+  // Détection WSL RÉELLE via wsl.ts (UTF-16LE + distro dynamique + cache).
+  // Renvoie la raison honnête en cas d'échec (affichée dans Core Manager).
   let wslAvailable = false;
+  let wslReason = '';
+  let wslVersion = '';
+  let distros: any[] = [];
   let defaultDistro: string | null = null;
   if (IS_WINDOWS) {
-    const distros = await listWslDistros();
-    wslAvailable = distros.length > 0;
-    if (wslAvailable) {
-      const test = await exec('wsl.exe', ['-d', distros[0].name, '--', 'echo', 'ok'], { timeoutMs: 10_000 });
-      wslAvailable = test.exitCode === 0 && test.stdout.includes('ok');
-    }
-    defaultDistro = distros[0]?.name || WSL_DISTRO;
+    const state = await getWslState();
+    wslAvailable = state.available;
+    wslReason = state.reason;
+    wslVersion = state.version;
+    distros = state.distros;
+    defaultDistro = state.defaultDistro;
   }
   return {
     platform: process.platform,
@@ -215,8 +217,11 @@ export async function getCoreStatus(): Promise<{
     wsl: {
       // Linux natif : les outils s'exécutent directement — équivalent WSL disponible.
       available: IS_WINDOWS ? wslAvailable : true,
-      distros: IS_WINDOWS ? await listWslDistros() : [],
-      defaultDistro,
+      installed: IS_WINDOWS ? (await getWslState()).installed : true,
+      version: wslVersion,
+      reason: wslReason,
+      distros: IS_WINDOWS ? distros : [],
+      defaultDistro: IS_WINDOWS ? defaultDistro : 'Linux natif',
     },
     tools: { available, missing },
     python: py,
@@ -225,21 +230,82 @@ export async function getCoreStatus(): Promise<{
   };
 }
 
-/** Installe les outils Linux manquants (apt) — sur Linux direct, sur Windows via WSL. */
+/** Installe les outils Linux manquants (apt) — sur Linux direct, sur Windows via le distro DÉTECTÉ. */
 export async function installToolsViaApt(): Promise<{ output: string; exitCode: number }> {
+  // Liste complète alignée sur APT_PACKAGES du wizard (l'ancienne liste omettait
+  // hashcat, macchanger, exploitdb, reaver, wireless-tools, iw).
+  const PACKAGES = 'nmap nikto whatweb aircrack-ng tshark iperf3 dnsrecon sslscan sqlmap gobuster hashcat exploitdb reaver macchanger wireless-tools iw';
   if (IS_WINDOWS) {
+    const state = await getWslState();
+    if (!state.available) {
+      return {
+        output: `Installation impossible : ${state.reason || 'WSL indisponible'}`,
+        exitCode: -1,
+      };
+    }
     // `-u root` évite le prompt sudo interactif (impossible en non-interactif via
     // wsl.exe) — même approche que le wizard de premier lancement.
-    const res = await exec(
-      'wsl.exe',
-      ['-d', WSL_DISTRO, '-u', 'root', '--', 'bash', '-c',
-       'apt-get update && apt-get install -y nmap nikto aircrack-ng tshark iperf3 dnsrecon whatweb sslscan sqlmap gobuster 2>&1'],
-      { timeoutMs: 180_000 }
+    const res = await runInDistro(
+      ['bash', '-c', `apt-get update && apt-get install -y ${PACKAGES} 2>&1`],
+      { user: 'root', timeoutMs: 600_000 }
     );
     return { output: res.stdout + res.stderr, exitCode: res.exitCode };
   }
-  const res = await exec('bash', ['-c', 'sudo apt-get update && sudo apt-get install -y nmap nikto aircrack-ng tshark iperf3 dnsrecon whatweb sslscan sqlmap gobuster 2>&1'], { timeoutMs: 180_000 });
+  const res = await exec('bash', ['-c', `sudo apt-get update && sudo apt-get install -y ${PACKAGES} 2>&1`], { timeoutMs: 600_000 });
   return { output: res.stdout + res.stderr, exitCode: res.exitCode };
+}
+
+/**
+ * Vérification RÉELLE des outils après installation : pour chaque outil attendu,
+ * `which` renvoie le chemin réel, `--version` la version, et le résultat est
+ * consigné dans <dataDir>/tools-registry/<tool>.json (preuve locale réutilisable).
+ */
+export async function verifyInstalledTools(): Promise<{
+  verified: Array<{ tool: string; path: string; version: string }>;
+  absent: string[];
+  registryDir: string;
+}> {
+  const TOOLS = [
+    'nmap', 'nikto', 'whatweb', 'aircrack-ng', 'airodump-ng', 'tshark',
+    'iperf3', 'dnsrecon', 'sslscan', 'sqlmap', 'gobuster', 'hashcat',
+    'searchsploit', 'reaver', 'macchanger', 'iw',
+  ];
+  const verified: Array<{ tool: string; path: string; version: string }> = [];
+  const absent: string[] = [];
+  for (const tool of TOOLS) {
+    let pathOut: string | null = null;
+    if (IS_WINDOWS) {
+      const r = await runInDistro(['bash', '-c', `command -v ${tool}`], { timeoutMs: 8_000 });
+      if (r.exitCode === 0 && r.stdout.trim()) pathOut = r.stdout.trim();
+    } else {
+      const r = await exec('which', [tool], { timeoutMs: 5_000 });
+      if (r.exitCode === 0 && r.stdout.trim()) pathOut = r.stdout.trim();
+    }
+    if (!pathOut) {
+      absent.push(tool);
+      continue;
+    }
+    // Version réelle (certains outils répondent sur stderr, on prend la 1re ligne)
+    let version = '';
+    if (IS_WINDOWS) {
+      const v = await runInDistro(['bash', '-c', `${tool} --version 2>&1 | head -1`], { timeoutMs: 10_000 });
+      version = v.stdout.trim().slice(0, 120);
+    } else {
+      const v = await exec(pathOut, ['--version'], { timeoutMs: 10_000 });
+      version = (v.stdout || v.stderr).trim().split('\n')[0]?.slice(0, 120) || '';
+    }
+    verified.push({ tool, path: pathOut, version });
+    try {
+      wsMod.recordTool({
+        tool,
+        path: pathOut,
+        version,
+        verifiedAt: new Date().toISOString(),
+        source: IS_WINDOWS ? 'wsl-apt-install' : 'native-install',
+      });
+    } catch { /* registre indisponible : non bloquant */ }
+  }
+  return { verified, absent, registryDir: wsMod.dataDir() + '/tools-registry' };
 }
 
 /** Exécute une commande et parse stdout comme JSON. Renvoie { error } si échec. */
@@ -717,17 +783,153 @@ export const toolWifiEvilTwin = (
   );
 
 // —— Terminal intégré (bash / powershell / cmd / python)
+//
+// CORRECTION MAJEURE : l'ancienne implémentation passait TOUS les shells par
+// terminal-exec.sh (bash → WSL → python3 → subprocess). Sur Windows cela
+// signifiait : PowerShell et CMD exécutés… dans Linux via WSL (absurde), et
+// mort totale si WSL/python3 manquaient. Désormais :
+//   - Windows : powershell.exe et cmd.exe exécutés NATIVEMENT (vrais shells
+//     Windows, accès aux vraies API/APIs Windows), bash/python via WSL détecté.
+//   - Linux   : bash/python natifs, powershell via pwsh si présent (honnête sinon).
+// Mêmes garde-fous que terminal-exec.sh (patterns destructeurs refusés).
 
-export const toolTerminal = (
+const TERMINAL_DANGEROUS = [
+  /rm\s+-rf\s+\/( |$)/,
+  /:\(\)\s*\{\s*:\|:\&\s*\}\s*;/,
+  /mkfs\./,
+  /dd\s+.*of=\/dev\/sd/,
+  /Remove-Item\s+-Recurse\s+-Force\s+[A-Za-z]:\\\s*$/,
+  /format\s+[A-Za-z]:/i,
+];
+
+function spawnCapture(
+  cmd: string,
+  args: string[],
+  opts: { timeoutMs?: number; cwd?: string }
+): Promise<{ stdout: string; stderr: string; exitCode: number }> {
+  return new Promise((resolve) => {
+    let child;
+    try {
+      child = spawn(cmd, args, {
+        cwd: opts.cwd || PROJECT_ROOT,
+        env: { ...process.env, LANG: 'C.UTF-8' },
+        stdio: ['ignore', 'pipe', 'pipe'],
+        windowsHide: true,
+        timeout: opts.timeoutMs ?? 30_000,
+      });
+    } catch (e: any) {
+      resolve({ stdout: '', stderr: e?.message || 'spawn failed', exitCode: -1 });
+      return;
+    }
+    let stdout = '';
+    let stderr = '';
+    let settled = false;
+    child.stdout.on('data', (d: Buffer) => { stdout += d.toString(); });
+    child.stderr.on('data', (d: Buffer) => { stderr += d.toString(); });
+    child.on('error', (e: Error) => {
+      if (settled) return;
+      settled = true;
+      resolve({ stdout, stderr: stderr + e.message, exitCode: -1 });
+    });
+    child.on('close', (code) => {
+      if (settled) return;
+      settled = true;
+      resolve({ stdout, stderr, exitCode: code ?? -1 });
+    });
+  });
+}
+
+export async function toolTerminal(
   shell: 'bash' | 'powershell' | 'cmd' | 'python',
   command: string,
   cwd?: string
-) =>
-  runScript(
-    'terminal-exec.sh',
-    [shell, command, ...(cwd ? [cwd] : [])],
-    35_000
-  );
+): Promise<any> {
+  const started = Date.now();
+  const result: any = {
+    tool: 'terminal',
+    shell,
+    command,
+    stdout: '',
+    stderr: '',
+    exitCode: -1,
+    durationMs: 0,
+    cwd: cwd || process.cwd(),
+    scannedAt: new Date().toISOString(),
+  };
+
+  for (const pat of TERMINAL_DANGEROUS) {
+    if (pat.test(command)) {
+      result.error = 'Commande refusée (pattern destructeur détecté)';
+      result.exitCode = -2;
+      result.durationMs = Date.now() - started;
+      return result;
+    }
+  }
+
+  try {
+    if (shell === 'powershell') {
+      // Windows : powershell.exe NATIF (accès réel aux cmdlets/API Windows).
+      // Linux : pwsh si installé, sinon état honnête.
+      if (IS_WINDOWS) {
+        const r = await spawnCapture('powershell.exe', ['-NoProfile', '-Command', command], { cwd, timeoutMs: 30_000 });
+        result.stdout = r.stdout;
+        result.stderr = r.stderr;
+        result.exitCode = r.exitCode;
+      } else {
+        const whichPwsh = await spawnCapture('which', ['pwsh'], { timeoutMs: 5_000 });
+        if (whichPwsh.exitCode === 0) {
+          const r = await spawnCapture('pwsh', ['-NoProfile', '-Command', command], { cwd, timeoutMs: 30_000 });
+          result.stdout = r.stdout;
+          result.stderr = r.stderr;
+          result.exitCode = r.exitCode;
+        } else {
+          result.error = 'PowerShell indisponible sur ce système Linux (pwsh non installé)';
+        }
+      }
+    } else if (shell === 'cmd') {
+      // CMD n'existe que sur Windows — exécution NATIVE (pas dans WSL !).
+      if (IS_WINDOWS) {
+        const r = await spawnCapture('cmd.exe', ['/c', command], { cwd, timeoutMs: 30_000 });
+        result.stdout = r.stdout;
+        result.stderr = r.stderr;
+        result.exitCode = r.exitCode;
+      } else {
+        result.error = 'CMD indisponible hors Windows (utilisez bash)';
+      }
+    } else if (shell === 'bash') {
+      if (IS_WINDOWS) {
+        // Bash réel du distro DÉTECTÉ (plus de 'Ubuntu' codé en dur).
+        const r = await runInDistro(['bash', '-c', command], { timeoutMs: 30_000 });
+        result.stdout = r.stdout;
+        result.stderr = r.stderr;
+        result.exitCode = r.exitCode;
+        if (r.timedOut) result.error = 'Délai dépassé (30 s)';
+      } else {
+        const r = await spawnCapture('bash', ['-c', command], { cwd, timeoutMs: 30_000 });
+        result.stdout = r.stdout;
+        result.stderr = r.stderr;
+        result.exitCode = r.exitCode;
+      }
+    } else if (shell === 'python') {
+      if (IS_WINDOWS) {
+        const r = await runInDistro(['python3', '-c', command], { timeoutMs: 30_000 });
+        result.stdout = r.stdout;
+        result.stderr = r.stderr;
+        result.exitCode = r.exitCode;
+        if (r.timedOut) result.error = 'Délai dépassé (30 s)';
+      } else {
+        const r = await spawnCapture('python3', ['-c', command], { cwd, timeoutMs: 30_000 });
+        result.stdout = r.stdout;
+        result.stderr = r.stderr;
+        result.exitCode = r.exitCode;
+      }
+    }
+  } catch (e: any) {
+    result.error = e?.message || 'Erreur d’exécution terminal';
+  }
+  result.durationMs = Date.now() - started;
+  return result;
+}
 
 // ============================================================
 //  Installation / vérification des outils

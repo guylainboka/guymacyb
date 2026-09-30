@@ -138,6 +138,8 @@ function buildServerEnv() {
   // (Program Files) ce qui échoue sans droits admin sous Windows.
   try {
     env.GCYB_DB_PATH = path.join(app.getPath('userData'), 'shadow_core.db');
+    // Dossier de données partagé (registre des outils installés, etc.)
+    env.GCYB_DATA_DIR = app.getPath('userData');
   } catch (e) {
     console.warn('[GuymaCyb] userData path unavailable, DB falls back to cwd:', e);
   }
@@ -335,7 +337,24 @@ const APT_PACKAGES = [
   'reaver', 'macchanger', 'wireless-tools', 'iw',
 ];
 
-/** Exécute une commande et renvoie { stdout, stderr, exitCode }. */
+/** Exécute une commande et renvoie { stdout, stderr, exitCode }.
+ *  FIX UTF-16LE : wsl.exe écrit sa sortie en UTF-16LE (avec BOM). On collecte
+ *  les Buffers bruts et on décode correctement (BOM ou densité d'octets nuls),
+ *  au lieu de `d.toString()` UTF-8 qui cassait le parsing sur Windows FR. */
+function decodeWinOutput(buf) {
+  if (!buf || buf.length === 0) return '';
+  const sample = buf.subarray(0, Math.min(buf.length, 4096));
+  const hasBom = sample.length >= 2 && sample[0] === 0xff && sample[1] === 0xfe;
+  let nulls = 0;
+  for (const b of sample) if (b === 0x00) nulls += 1;
+  if (hasBom || nulls / sample.length > 0.15) {
+    let text = buf.toString('utf16le');
+    if (text.charCodeAt(0) === 0xfeff) text = text.slice(1);
+    return text;
+  }
+  return buf.toString('utf8');
+}
+
 function runCmd(cmd, args, opts = {}) {
   return new Promise((resolve) => {
     const child = spawn(cmd, args, {
@@ -345,15 +364,18 @@ function runCmd(cmd, args, opts = {}) {
       windowsHide: true,
       timeout: opts.timeoutMs || 30_000,
     });
-    let stdout = '', stderr = '';
-    child.stdout.on('data', (d) => (stdout += d.toString()));
-    child.stderr.on('data', (d) => (stderr += d.toString()));
-    child.on('error', (e) => resolve({ stdout, stderr: stderr + e.message, exitCode: -1 }));
-    child.on('close', (code) => resolve({ stdout, stderr, exitCode: code ?? -1 }));
+    const outChunks = [], errChunks = [];
+    child.stdout.on('data', (d) => outChunks.push(d));
+    child.stderr.on('data', (d) => errChunks.push(d));
+    child.on('error', (e) => resolve({ stdout: decodeWinOutput(Buffer.concat(outChunks)), stderr: decodeWinOutput(Buffer.concat(errChunks)) + e.message, exitCode: -1 }));
+    child.on('close', (code) => resolve({ stdout: decodeWinOutput(Buffer.concat(outChunks)), stderr: decodeWinOutput(Buffer.concat(errChunks)), exitCode: code ?? -1 }));
   });
 }
 
-/** Détecte si WSL est installé + liste les distros (Windows uniquement). */
+/** Détecte si WSL est installé + liste les distros (Windows uniquement).
+ *  FIX DISTRO DYNAMIQUE : le distro par défaut est DÉTECTÉ (astérisque de
+ *  `wsl -l -v`) au lieu du 'Ubuntu' codé en dur qui cassait quand le distro
+ *  s'appelle Ubuntu-22.04 / Ubuntu-24.04 / Debian… */
 async function detectWsl() {
   if (!IS_WIN) {
     return { available: false, reason: 'Mode Linux natif — WSL non requis (outils exécutés directement)' };
@@ -364,18 +386,25 @@ async function detectWsl() {
     return { available: false, reason: 'wsl.exe introuvable — WSL non installé' };
   }
   // Liste les distros installés
-  const listRes = await runCmd('wsl.exe', ['-l', '-v'], { timeoutMs: 8000 });
-  const out = (listRes.stdout + listRes.stderr).replace(/\x1b\[[0-9;]*m/g, '').replace(/\0/g, '');
-  const lines = out.split('\n').map((l) => l.trim()).filter(Boolean);
+  const listRes = await runCmd('wsl.exe', ['-l', '-v'], { timeoutMs: 15000 });
+  const out = (listRes.stdout + listRes.stderr).replace(/\x1b\[[0-9;]*m/g, '').replace(/\uFEFF/g, '');
+  const lines = out.split('\n').map((l) => l.replace(/\0/g, '').trimEnd()).filter((l) => l.trim());
   const distros = [];
-  for (const line of lines.slice(1)) {
-    const parts = line.split(/\s+/);
-    if (parts.length >= 3) distros.push({ name: parts[0], state: parts[1], version: parts[2] });
+  for (const line of lines) {
+    // Ligne d'en-tête ignorée (contient NAME/STATE ou équivalent localisé)
+    const isDefault = /^\s*\*/.test(line);
+    const clean = line.replace(/^\s*\*\s*/, '').trim();
+    const parts = clean.split(/\s{2,}|\t/).map((p) => p.trim()).filter(Boolean);
+    if (parts.length >= 3 && /^\d+$/.test(parts[parts.length - 1])) {
+      distros.push({ name: parts[0], state: parts[1], version: parts[parts.length - 1], isDefault });
+    }
   }
-  // Teste si le distro par défaut démarre vraiment
-  let defaultDistro = distros[0]?.name || WSL_DISTRO;
+  // Distro par défaut : astérisque, sinon premier, sinon env, sinon 'Ubuntu'
+  const marked = distros.find((d) => d.isDefault);
+  let defaultDistro = process.env.WSL_DISTRO || marked?.name || distros[0]?.name || WSL_DISTRO;
   if (distros.length > 0) {
-    const testRes = await runCmd('wsl.exe', ['-d', defaultDistro, '--', 'echo', 'ok'], { timeoutMs: 10000 });
+    // Premier contact potentiellement long (démarrage à froid du service WSL)
+    const testRes = await runCmd('wsl.exe', ['-d', defaultDistro, '--', 'echo', 'ok'], { timeoutMs: 30000 });
     if (testRes.exitCode !== 0 || !testRes.stdout.includes('ok')) {
       return { available: false, reason: 'WSL installé mais le distro ' + defaultDistro + ' ne démarre pas', distros };
     }

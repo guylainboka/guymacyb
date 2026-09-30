@@ -34,6 +34,8 @@ import { LAB_ATTACK_VECTORS } from './src/data/labAttackVectors';
 import { WIFI_LAB_VECTORS } from './src/data/wifiLabVectors';
 import { COURSE_NOTIONS } from './src/data/courseNotions';
 import { getPackagingInfo } from './src/server/packaging';
+import * as ws from './src/server/windowsSystem';
+import { invalidateWslCache } from './src/server/wsl';
 import * as tb from './src/server/toolbridge';
 
 // PORT/HOST configurables : Electron (electron-main.cjs) injecte PORT=3000 et
@@ -890,11 +892,78 @@ async function startServer() {
     }
   });
 
+  // Force une re-détection WSL (après installation d'un distro par exemple)
+  app.post('/api/core/refresh-wsl', async (_req, res) => {
+    try {
+      invalidateWslCache();
+      const status = await tb.getCoreStatus();
+      res.json(status);
+    } catch (err: any) {
+      res.status(500).json({ error: err.message });
+    }
+  });
+
+  // Registre des outils installés (dossier tools-registry, preuve locale réelle)
+  app.get('/api/core/tools-registry', async (_req, res) => {
+    try {
+      res.json(ws.readToolRegistry());
+    } catch (err: any) {
+      res.status(500).json({ error: err.message });
+    }
+  });
+
+  // ============================================================
+  //  Intégration système Windows (droits admin, matériel, services)
+  // ============================================================
+
+  // Statut système consolidé pour l'Accueil : droits admin + WSL + résumé matériel
+  app.get('/api/system/status', async (_req, res) => {
+    try {
+      const [admin, hw] = await Promise.all([ws.isAdmin(), ws.getHardware()]);
+      res.json({
+        platform: process.platform,
+        admin,
+        hardware: {
+          os: hw.os,
+          cpu: hw.cpu,
+          ram: hw.ram,
+          hostname: hw.hostname,
+          error: hw.error,
+        },
+      });
+    } catch (err: any) {
+      res.status(500).json({ error: err.message });
+    }
+  });
+
+  // Inventaire matériel complet (CIM/WMI sur Windows, /proc sur Linux)
+  app.get('/api/system/hardware', async (_req, res) => {
+    try {
+      res.json(await ws.getHardware());
+    } catch (err: any) {
+      res.status(500).json({ error: err.message });
+    }
+  });
+
+  // Services Windows surveillés (LxssManager/WslService, BFE, Defender, WLAN…)
+  app.get('/api/system/services', async (_req, res) => {
+    try {
+      res.json(await ws.getWatchedServices());
+    } catch (err: any) {
+      res.status(500).json({ error: err.message });
+    }
+  });
+
   // Core Manager — installe les outils Linux manquants (apt) via WSL sur Windows,
-  // direct sur Linux. Peut prendre jusqu'à 3 minutes.
+  // direct sur Linux. Peut prendre jusqu'à 10 minutes. Chaque outil est ensuite
+  // VÉRIFIÉ (which + version) et consigné dans <dataDir>/tools-registry/.
   app.post('/api/core/install-tools', async (_req, res) => {
     try {
-      res.json(await tb.installToolsViaApt());
+      const result = await tb.installToolsViaApt();
+      invalidateWslCache();
+      // Vérification réelle post-install + registre local (dossier tools-registry)
+      const verification = await tb.verifyInstalledTools();
+      res.json({ ...result, verification });
     } catch (err: any) {
       res.status(500).json({ error: err.message });
     }
