@@ -17,7 +17,7 @@ interface FooterHealthState {
 }
 
 /**
- * Doctrine « zéro simulation » : ce footer n'affiche que des valeurs réelles.
+ * Doctrine « zéro invention » : ce footer n'affiche que des valeurs réelles.
  * L'ancien code hardcodait « 137 endpoints », « Memory: 412 MB » et
  * « Workers: 4/4 active » dans le JSX — des compteurs fictifs contredits par
  * la base SQLite vide au premier lancement. Désormais :

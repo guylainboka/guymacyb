@@ -100,7 +100,7 @@ export const ReportRemediationView: React.FC<ReportRemediationViewProps> = ({
       findingsCount: findings.length,
       // Liste explicite des findings (titre, sévérité, CVSS, CWE, composant).
       // Les surfaces endpoints/technologies ne sont pas disponibles ici — on
-      // ne les invente pas (doctrine « zéro simulation »).
+      // ne les invente pas (doctrine « zéro invention »).
       findings: findings.map((f) => ({
         id: f.id,
         title: f.title,
@@ -340,7 +340,7 @@ export const ReportRemediationView: React.FC<ReportRemediationViewProps> = ({
         </div>
       </div>
 
-      {/* Bandeau « remédiations génériques » — doctrine zéro simulation */}
+      {/* Bandeau « remédiations génériques » — doctrine zéro invention */}
       <div className="bg-[#1a1410] border border-[#f59e0b]/40 rounded-lg p-4 flex items-start gap-3 font-mono text-xs">
         <span className="material-symbols-outlined text-[20px] text-[#fbbf24] shrink-0">info</span>
         <div className="flex-1">

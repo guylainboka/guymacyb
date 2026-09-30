@@ -382,9 +382,9 @@ app.post('/api/login', authLimiter, handleLogin);`,
     difficulty: 'FAIBLE',
     description:
       'Configuration trop permissive du partage de ressources entre origines multiples (CORS), permettant à des sites tiers non autorisés de lire des données privées de l’utilisateur authentifié.',
-    safeTestPayload: 'GET /api/user/profile avec Origin: https://malicious-site-simulation.test',
+    safeTestPayload: 'GET /api/user/profile avec Origin: https://evil-origin-attestation.test',
     vulnerableResponseSample: `HTTP/1.1 200 OK
-Access-Control-Allow-Origin: https://malicious-site-simulation.test
+Access-Control-Allow-Origin: https://evil-origin-attestation.test
 Access-Control-Allow-Credentials: true
 Vary: Origin
 

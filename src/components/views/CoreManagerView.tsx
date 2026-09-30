@@ -197,7 +197,7 @@ export const CoreManagerView: React.FC = () => {
                 <span className="text-xs font-semibold text-[#dfe2f1]">JSON parsing</span>
               </div>
               <p className="text-[11px] text-[#8c909f] font-mono leading-relaxed">
-                Sortie JSON parsée côté Node, renvoyée au front. Aucune simulation.
+                Sortie JSON parsée côté Node, renvoyée au front. Exécution 100% réelle.
               </p>
             </div>
           </div>

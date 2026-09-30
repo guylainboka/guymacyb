@@ -35,39 +35,37 @@ export const ResultsEvidenceView: React.FC<ResultsEvidenceViewProps> = ({
   const lowCount = findings.filter((f) => f.severity === 'LOW').length;
   const criticalCount = findings.filter((f) => f.severity === 'CRITICAL').length;
 
-  // Re-test via backend réel — doctrine « zéro simulation » : l'ancien code
-  // simulait un succès après 900 ms (« Vulnérabilité toujours confirmée »
-  // « Exploitable à 100% ») sans aucun appel backend. C'était un faux succès
-  // dangereux. On appelle désormais la vraie API `/api/findings/{id}/retest`,
-  // qui n'existe pas encore — on affiche donc honnêtement l'erreur 404.
+  // Re-test RÉEL via /api/findings/{id}/retest : le serveur ré-exécute la
+  // sonde d'origine contre la cible réelle et renvoie un verdict structuré
+  // (CONFIRMED / RESOLVED / INCONCLUSIVE) avec les preuves réseau réelles.
   const handleRetest = async () => {
     if (!selectedFinding) return;
     setIsRetesting(true);
     setRetestError(false);
-    setRetestMessage('Envoi de la sonde active de contre-vérification au moteur backend...');
+    setRetestMessage('Ré-exécution de la sonde d\'origine contre la cible réelle…');
     try {
       const res = await fetch(`/api/findings/${encodeURIComponent(selectedFinding.id)}/retest`, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ operatorId: 'SEC-OPS-0982' }),
       });
-      if (res.status === 404) {
+      if (!res.ok) {
+        const errData = await res.json().catch(() => null);
         setRetestError(true);
         setRetestMessage(
-          `Re-test non configuré — API /api/findings/${selectedFinding.id}/retest non implémentée.`
+          `Re-test impossible — ${errData?.error || `HTTP ${res.status}`} renvoyé par le moteur.`
         );
         return;
       }
-      if (!res.ok) {
+      const data = await res.json().catch(() => null);
+      if (!data?.verdict) {
         setRetestError(true);
-        setRetestMessage(`Échec du re-test — HTTP ${res.status} renvoyé par le moteur.`);
+        setRetestMessage('Réponse du moteur sans verdict exploitable — vérifiez les logs serveur.');
         return;
       }
-      const data = await res.json().catch(() => null);
-      setRetestError(false);
+      setRetestError(data.verdict === 'INCONCLUSIVE');
       setRetestMessage(
-        `Re-test terminé à ${new Date().toLocaleTimeString()} : ${
-          data?.summary || 'le moteur a renvoyé une réponse sans champ summary.'
-        }`
+        `Verdict réel : ${data.verdict} — ${data.method} (${data.requestsSent} requête(s) réelle(s), ${data.durationMs}ms). ${Array.isArray(data.details) ? data.details.join(' ') : ''}`
       );
     } catch (err: any) {
       setRetestError(true);

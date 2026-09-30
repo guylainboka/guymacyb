@@ -171,7 +171,7 @@ export const ArsenalView: React.FC = () => {
                 </button>
               </div>
               <p className="text-[11px] text-[#8c909f] mt-2 font-mono">
-                Utilise <code>searchsploit</code> (ExploitDB) via le pont WSL/Linux. Aucune simulation.
+                Utilise <code>searchsploit</code> (ExploitDB) via le pont WSL/Linux. Exécution 100% réelle.
               </p>
             </div>
 
@@ -286,7 +286,7 @@ export const ArsenalView: React.FC = () => {
                 </div>
               </div>
               <p className="text-[11px] text-[#8c909f] mt-2 font-mono">
-                Utilise <code>hashcat</code> en mode dictionary attack. Aucune simulation — sortie réelle du binaire.
+                Utilise <code>hashcat</code> en mode dictionary attack. Exécution 100% réelle — sortie réelle du binaire.
               </p>
             </div>
 

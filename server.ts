@@ -16,12 +16,17 @@ import os from 'os';
 import { getDatabase, saveDatabaseToDisk, getDbFilePath } from './src/server/db';
 import { checkConnectivity, runRealAnalysis } from './src/server/scanner';
 import {
-  executeLabSimulation,
+  executeLabProbe,
   commitFullLabSuiteToReport,
   runAutomatedReconSuite,
-  executeWifiLabSimulation,
-  commitFullWifiLabSuiteToReport,
 } from './src/server/securityLab';
+import { runActiveTestSuite } from './src/server/activeTests';
+import { retestFinding } from './src/server/retest';
+import {
+  validateAuthorization,
+  recordAuthorization,
+  AUTHORIZATION_STATEMENTS,
+} from './src/server/authorization';
 import { LAB_ATTACK_VECTORS } from './src/data/labAttackVectors';
 import { WIFI_LAB_VECTORS } from './src/data/wifiLabVectors';
 import { COURSE_NOTIONS } from './src/data/courseNotions';
@@ -81,7 +86,7 @@ async function startServer() {
           targetsCount: targetCount,
           scansCount: scanCount,
           findingsCount: findingsCount,
-          // Doctrine « zéro simulation » : le Footer affiche désormais ce
+          // Doctrine « zéro invention » : le Footer affiche désormais ce
           // compteur RÉEL (l'ancien code affichait un « 137 endpoints »
           // hardcodé dans le JSX, contredit par la base vide au démarrage).
           endpointsCount: endpointsCount,
@@ -124,37 +129,104 @@ async function startServer() {
     }
   });
 
-  // Cyber Security Lab API - List all attack vectors
+  // Laboratoire RÉEL — catalogue des 8 vecteurs (fiches techniques + sondes)
   app.get('/api/lab/vectors', (_req, res) => {
     res.json(LAB_ATTACK_VECTORS);
   });
 
-  // Cyber Security Lab API - Simulate attack vector in sandbox
-  app.post('/api/lab/simulate', async (req, res) => {
+  // Déclaration légale officielle à afficher dans les modales d'autorisation
+  app.get('/api/authorization/statements', (_req, res) => {
+    res.json(AUTHORIZATION_STATEMENTS);
+  });
+
+  // Laboratoire RÉEL — exécute la sonde réelle d'un vecteur contre la cible.
+  // Envoie de VRAIES requêtes HTTP à la cible autorisée (attestation ACTIVE
+  // obligatoire, journalisée) et analyse les VRAIES réponses.
+  app.post('/api/lab/probe', async (req, res) => {
     try {
-      const { vectorId, targetMode = 'vulnerable', operatorId = 'SEC-OPS-0982' } = req.body;
+      const { vectorId, targetUrl, operatorId = 'SEC-OPS-0982', authToken } = req.body || {};
       if (!vectorId) {
         return res.status(400).json({ error: 'vectorId requis' });
       }
-      const simulation = await executeLabSimulation(vectorId, targetMode, operatorId);
-      res.json(simulation);
+      const authCheck = validateAuthorization(req.body, 'ACTIVE', targetUrl);
+      if (!authCheck.ok) {
+        return res.status(403).json({ error: authCheck.reason });
+      }
+      await recordAuthorization(authCheck.authorization);
+      const probe = await executeLabProbe(vectorId, authCheck.authorization.targetUrl, operatorId, { authToken });
+      res.json(probe);
     } catch (err: any) {
-      console.error('[ShadowScan Lab] Simulation error:', err);
-      res.status(500).json({ error: err.message || 'Erreur de simulation' });
+      console.error('[GuymaCyb Lab] Erreur de sonde réelle:', err);
+      res.status(500).json({ error: err.message || 'Erreur de sonde réelle' });
     }
   });
 
-  // Cyber Security Lab API - Generate full lab audit report and persist in SQLite
+  // Laboratoire RÉEL — suite complète des 8 sondes réelles contre la cible
+  // autorisée + rapport consolidé réel persisté en SQLite.
   app.post('/api/lab/generate-report', async (req, res) => {
     try {
-      const { operatorId = 'SEC-OPS-0982' } = req.body;
-      const reportResult = await commitFullLabSuiteToReport(operatorId);
+      const { operatorId = 'SEC-OPS-0982' } = req.body || {};
+      const authCheck = validateAuthorization(req.body, 'ACTIVE');
+      if (!authCheck.ok) {
+        return res.status(403).json({ error: authCheck.reason });
+      }
+      await recordAuthorization(authCheck.authorization);
+      const reportResult = await commitFullLabSuiteToReport(operatorId, authCheck.authorization.targetUrl);
       res.json(reportResult);
     } catch (err: any) {
-      console.error('[ShadowScan Lab] Report generation error:', err);
-      res.status(500).json({ error: err.message || 'Erreur de génération du rapport' });
+      console.error('[GuymaCyb Lab] Erreur de rapport réel:', err);
+      res.status(500).json({ error: err.message || 'Erreur de génération du rapport réel' });
     }
   });
+
+  // ============================================================
+  //  Suite de TESTS ACTIFS RÉELS (attestation obligatoire)
+  // ============================================================
+  // Exécute 7 familles de sondes actives réelles (+ nikto réel si attestation
+  // DESTRUCTIVE et Safe Mode OFF). Chaque famille envoie de vraies requêtes
+  // réseau à la cible autorisée et persiste de vrais findings.
+  app.post('/api/tests/active/run', async (req, res) => {
+    try {
+      const { url, operatorId = 'SEC-OPS-0982', safeMode = false } = req.body || {};
+      const authCheck = validateAuthorization(req.body, 'DESTRUCTIVE', url);
+      const level = authCheck.ok ? authCheck.authorization.level : 'ACTIVE';
+      // Niveau ACTIVE accepté : les familles actives s'exécutent, la famille
+      // déstructrice (nikto) est sautée avec un message honnête.
+      const activeCheck = authCheck.ok
+        ? authCheck
+        : validateAuthorization(req.body, 'ACTIVE', url);
+      if (!activeCheck.ok) {
+        return res.status(403).json({ error: activeCheck.reason });
+      }
+      await recordAuthorization(activeCheck.authorization);
+      const result = await runActiveTestSuite(activeCheck.authorization.targetUrl, operatorId, {
+        safeMode: Boolean(safeMode),
+        authorizationLevel: activeCheck.authorization.level as 'ACTIVE' | 'DESTRUCTIVE',
+      });
+      res.json(result);
+    } catch (err: any) {
+      console.error('[GuymaCyb ActiveTests] Erreur de suite active:', err);
+      res.status(500).json({ error: err.message || 'Erreur de suite active' });
+    }
+  });
+
+  // ============================================================
+  //  Re-test RÉEL d'un finding (ré-exécution de la sonde d'origine)
+  // ============================================================
+  const retestHandler = async (req: any, res: any) => {
+    try {
+      const findingId = String(req.params.id || '');
+      if (!findingId) return res.status(400).json({ error: 'id du finding requis' });
+      const operatorId = (req.body && req.body.operatorId) || 'SEC-OPS-0982';
+      const result = await retestFinding(findingId, operatorId);
+      res.json(result);
+    } catch (err: any) {
+      console.error('[GuymaCyb Retest] Erreur de re-test:', err);
+      res.status(err.message?.includes('introuvable') ? 404 : 500).json({ error: err.message || 'Erreur de re-test' });
+    }
+  };
+  app.post('/api/findings/:id/retest', retestHandler);
+  app.get('/api/findings/:id/retest', retestHandler);
 
   // Automated Reconnaissance Suite (defensive port discovery, DNS, headers)
   app.post('/api/recon/advanced-suite', async (req, res) => {
@@ -175,7 +247,7 @@ async function startServer() {
   app.get('/api/targets', async (_req, res) => {
     try {
       const db = await getDatabase();
-      // Doctrine « zéro simulation » : on EXCLUT la cible virtuelle du
+      // Doctrine « zéro invention » : on EXCLUT la cible virtuelle du
       // laboratoire d'attaques (target-lab-sandbox / shadowscan-lab.internal)
       // pour qu'elle n'apparaisse pas dans le dashboard des cibles réelles.
       // L'ancien code mélangeait les cibles réelles scannées et la cible
@@ -234,7 +306,7 @@ async function startServer() {
       `;
       const params: any[] = [];
       const conditions: string[] = [];
-      // Doctrine « zéro simulation » : on EXCLUT les findings du laboratoire
+      // Doctrine « zéro invention » : on EXCLUT les findings du laboratoire
       // d'attaques (scan_id 'lab-simulation-scan' / 'SCAN-LAB-*' / 'SCAN-WIFI-LAB-*'
       // et target_url 'shadowscan-lab.internal') pour que le dashboard ne montre
       // QUE les findings issus de vrais scans de cibles réelles. Les findings du
@@ -281,7 +353,7 @@ async function startServer() {
             request: obj.evidence_request,
             response: obj.evidence_response,
             authContext: 'Audit de sécurité réseau',
-            // Doctrine « zéro simulation » : on ne fabrique plus de latence
+            // Doctrine « zéro invention » : on ne fabrique plus de latence
             // factice. roundtripMs n'est pas persisté en base (la table findings
             // n'a pas de colonne dédiée) — on l'omet plutôt que d'inventer 25.
             nonDestructiveProof: true,
@@ -316,7 +388,7 @@ async function startServer() {
   });
 
   // Desktop Packaging API - Download GuymaCyb-Setup-v1.0.0.exe Windows Installer
-  // Doctrine « zéro simulation » : on NE GÉNÈRE PLUS de stub .exe factice
+  // Doctrine « zéro invention » : on NE GÉNÈRE PLUS de stub .exe factice
   // (l'ancien code retournait un buffer de 64 octets avec juste l'en-tête MZ,
   // ce qui donnait l'illusion d'un téléchargement valide). Le vrai installateur
   // de ~180 Mo est produit par GitHub Actions (workflow build-windows.yml) et
@@ -325,7 +397,7 @@ async function startServer() {
   app.get('/api/desktop/download-installer', (_req, res) => {
     res.status(501).json({
       error: 'Build non disponible depuis l\'application.',
-      reason: 'Le vrai installateur Windows (GuymaCyb-Setup-v1.0.0.exe, ~180 Mo) est produit par GitHub Actions, pas par cette API. Un ancien code générait un stub .exe factice de 64 octets — supprimé (doctrine zéro simulation).',
+      reason: 'Le vrai installateur Windows (GuymaCyb-Setup-v1.0.0.exe, ~180 Mo) est produit par GitHub Actions, pas par cette API. Un ancien code générait un stub .exe factice de 64 octets — supprimé (doctrine zéro invention).',
       howToGet: 'Téléchargez-le depuis l\'onglet Actions du dépôt GitHub : https://github.com/guylainboka/guymacyb/actions — ou build-le localement avec desktop\\build-windows-exe.bat sur Windows.',
     });
   });
@@ -509,34 +581,25 @@ async function startServer() {
     }
   });
 
-  // WiFi Lab — liste de tous les vecteurs d'attaque WiFi
+  // WiFi Lab — catalogue des fiches techniques WiFi (contenu de cours)
   app.get('/api/wifi/lab/vectors', (_req, res) => {
     res.json(WIFI_LAB_VECTORS);
   });
 
-  // WiFi Lab — simuler un vecteur d'attaque dans le sandbox
-  app.post('/api/wifi/lab/simulate', async (req, res) => {
-    try {
-      const { vectorId, targetMode = 'vulnerable', operatorId = 'SEC-OPS-0982' } = req.body || {};
-      if (!vectorId) return res.status(400).json({ error: 'vectorId requis' });
-      const simulation = await executeWifiLabSimulation(vectorId, targetMode, operatorId);
-      res.json(simulation);
-    } catch (err: any) {
-      console.error('[ShadowScan WiFi Lab] Simulation error:', err);
-      res.status(500).json({ error: err.message || 'Erreur de simulation WiFi' });
-    }
+  // Les anciens endpoints de WiFi factice ont été retirés : le laboratoire
+  // WiFi s'appuie désormais sur les outils WiFi RÉELS (/api/wifi/*) avec
+  // attestation — voir LaboratoireWifiView. Aucune donnée WiFi n'est
+  // fabriquée : sans matériel radio réel, les outils renvoient des erreurs
+  // honnêtes (mode: no-wireless-hardware).
+  app.post('/api/wifi/lab/simulate', (_req, res) => {
+    res.status(410).json({
+      error: 'Endpoint retiré — aucune donnée WiFi fabriquée. Utilisez les outils WiFi réels : POST /api/wifi/scan, /api/wifi/wpa-audit, /api/wifi/deauth-detect, /api/wifi/handshake-capture, /api/wifi/crack-handshake, /api/wifi/wps-attack, /api/wifi/mac-changer (attestation + matériel radio réel requis).',
+    });
   });
-
-  // WiFi Lab — générer un rapport WiFi complet et le persister en SQLite
-  app.post('/api/wifi/lab/generate-report', async (req, res) => {
-    try {
-      const { operatorId = 'SEC-OPS-0982' } = req.body || {};
-      const reportResult = await commitFullWifiLabSuiteToReport(operatorId);
-      res.json(reportResult);
-    } catch (err: any) {
-      console.error('[ShadowScan WiFi Lab] Report generation error:', err);
-      res.status(500).json({ error: err.message || 'Erreur de génération du rapport WiFi' });
-    }
+  app.post('/api/wifi/lab/generate-report', (_req, res) => {
+    res.status(410).json({
+      error: 'Endpoint retiré — aucun rapport WiFi fabriqué. Les résultats WiFi réels proviennent des outils /api/wifi/* contre un réseau autorisé.',
+    });
   });
 
   // ============================================================
@@ -698,7 +761,7 @@ async function startServer() {
   });
 
   // Dashboard — statistiques agrégées depuis SQLite (compteurs + derniers 5)
-  // Doctrine « zéro simulation » : on EXCLUT systématiquement les entrées du
+  // Doctrine « zéro invention » : on EXCLUT systématiquement les entrées du
   // laboratoire d'attaques (target-lab-sandbox / shadowscan-lab.internal /
   // scans 'lab-%' / 'SCAN-LAB-%' / 'SCAN-WIFI-LAB-%') pour que le dashboard
   // ne reflète QUE les vrais scans de cibles réelles.

@@ -1,11 +1,10 @@
 import React, { useState, useEffect, useRef } from 'react';
-import { ActiveTestFamily, TerminalLog, EndpointItem, Finding } from '../../types';
+import { ActiveRunResult, TerminalLog } from '../../types';
 
 interface ActiveTestsViewProps {
-  testFamilies: ActiveTestFamily[];
+  targetUrl: string;
+  runResult: ActiveRunResult | null;
   terminalLogs: TerminalLog[];
-  endpointsTree: EndpointItem[];
-  findings: Finding[];
   isTesting: boolean;
   onStopTest: () => void;
   onStartTest: () => void;
@@ -15,11 +14,16 @@ interface ActiveTestsViewProps {
   setSafeMode: React.Dispatch<React.SetStateAction<boolean>>;
 }
 
+/**
+ * Vue TESTS ACTIFS RÉELS — affiche les résultats RÉELS de la suite exécutée
+ * par /api/tests/active/run (vraies requêtes réseau, vrais findings persistés).
+ * Aucune barre de progression artificielle : tant que la suite n'a pas tourné,
+ * la vue l'affiche honnêtement.
+ */
 export const ActiveTestsView: React.FC<ActiveTestsViewProps> = ({
-  testFamilies,
+  targetUrl,
+  runResult,
   terminalLogs,
-  endpointsTree,
-  findings,
   isTesting,
   onStopTest,
   onStartTest,
@@ -28,28 +32,23 @@ export const ActiveTestsView: React.FC<ActiveTestsViewProps> = ({
   safeMode,
   setSafeMode,
 }) => {
-  // Sélecteur de famille : on évite testFamilies[2] qui pourrait être
-  // undefined lorsque la liste est vide (état initial « zéro simulation »).
-  const [selectedFamily, setSelectedFamily] = useState<ActiveTestFamily | null>(
-    testFamilies[0] ?? null
-  );
+  const [selectedFamilyId, setSelectedFamilyId] = useState<string | null>(null);
   const [logFilter, setLogFilter] = useState<string>('');
   const [autoScroll, setAutoScroll] = useState<boolean>(true);
   const terminalEndRef = useRef<HTMLDivElement>(null);
 
-  // Auto-scroll terminal logs if enabled
   useEffect(() => {
     if (autoScroll && terminalEndRef.current) {
       terminalEndRef.current.scrollIntoView({ behavior: 'smooth' });
     }
   }, [terminalLogs, autoScroll]);
 
-  // Resynchronise la famille sélectionnée quand la liste change (nouveau scan).
+  // Sélection automatique de la première famille au résultat
   useEffect(() => {
-    if (!testFamilies.some((f) => f.id === selectedFamily?.id)) {
-      setSelectedFamily(testFamilies[0] ?? null);
+    if (runResult?.families?.length && !selectedFamilyId) {
+      setSelectedFamilyId(runResult.families[0].id);
     }
-  }, [testFamilies, selectedFamily]);
+  }, [runResult, selectedFamilyId]);
 
   const filteredLogs = terminalLogs.filter((l) => {
     if (!logFilter) return true;
@@ -57,23 +56,19 @@ export const ActiveTestsView: React.FC<ActiveTestsViewProps> = ({
     return l.text.toLowerCase().includes(q) || l.tag.toLowerCase().includes(q);
   });
 
+  const selectedFamily = runResult?.families.find((f) => f.id === selectedFamilyId) ?? null;
+
+  const statusBadge = (status: 'PASS' | 'FAIL' | 'SKIP' | 'ERROR') =>
+    status === 'PASS'
+      ? 'bg-[#10b981]/20 text-[#10b981]'
+      : status === 'FAIL'
+      ? 'bg-[#93000a]/40 text-[#ffb4ab] border border-[#ffb4ab]/30'
+      : status === 'ERROR'
+      ? 'bg-[#f59e0b]/20 text-[#fbbf24]'
+      : 'bg-[#262a35] text-[#8c909f]';
+
   return (
     <div className="flex-1 overflow-y-auto p-5 flex flex-col gap-5 font-sans">
-      {/* Bandeau « fonctionnalité non configurée » — doctrine zéro simulation */}
-      <div className="bg-[#93000a]/15 border border-[#ffb4ab]/40 rounded-lg p-4 flex items-start gap-3 font-mono text-xs">
-        <span className="material-symbols-outlined text-[20px] text-[#ffb4ab] shrink-0">warning</span>
-        <div className="flex-1">
-          <strong className="text-[#ffb4ab] block mb-0.5">Tests actifs : fonctionnalité non configurée</strong>
-          <span className="text-[#dfe2f1]">
-            Aucune sonde n'est lancée actuellement. L'implémentation d'une vraie API{' '}
-            <code className="text-[#4cd7f6]">/api/tests/active/run</code> est prévue pour exécuter de
-            réelles séquences de tests non-destructifs. En attendant, cette vue reste un tableau de
-            bord honnête : elle affiche uniquement les données déjà collectées par l'analyse passive
-            et les findings qualifiés.
-          </span>
-        </div>
-      </div>
-
       {/* Header Strip & Emergency Stop */}
       <div className="bg-[#171b26] border border-[#24314c] rounded-lg p-4 flex flex-wrap items-center justify-between gap-4 shadow-sm font-mono text-xs">
         <div className="flex items-center gap-3">
@@ -84,22 +79,37 @@ export const ActiveTestsView: React.FC<ActiveTestsViewProps> = ({
                 : 'bg-[#10b981]/20 border border-[#10b981]/40 text-[#10b981]'
             }`}
           >
-            <span
-              className={`w-2.5 h-2.5 rounded-full ${
-                isTesting ? 'bg-[#ffb4ab] animate-ping' : 'bg-[#10b981]'
-              }`}
-            ></span>
-            <span>{isTesting ? 'TESTS ACTIFS EN COURS' : 'TESTS TERMINÉS / EN ATTENTE'}</span>
+            <span className={`w-2.5 h-2.5 rounded-full ${isTesting ? 'bg-[#ffb4ab] animate-ping' : 'bg-[#10b981]'}`}></span>
+            <span>{isTesting ? 'SONDES RÉELLES EN COURS' : 'EN ATTENTE / TERMINÉ'}</span>
           </div>
 
           <div className="flex items-center gap-3 text-[#c2c6d6]">
-            <span>Workers: <strong className="text-white">Non configuré</strong></span>
-            <span className="text-[#424754]">|</span>
-            <span>Rate: <strong className="text-white">Non configuré</strong></span>
+            <span>
+              Cible : <strong className="text-[#4cd7f6]">{targetUrl}</strong>
+            </span>
+            {runResult && (
+              <>
+                <span className="text-[#424754]">|</span>
+                <span>
+                  Requêtes réelles : <strong className="text-white">{runResult.totalRequests}</strong>
+                </span>
+                <span className="text-[#424754]">|</span>
+                <span>
+                  Findings réels : <strong className="text-white">{runResult.findingsCreated}</strong>
+                </span>
+                <span className="text-[#424754]">|</span>
+                <span>
+                  Durée : <strong className="text-white">{runResult.durationMs} ms</strong>
+                </span>
+                <span className="text-[#424754]">|</span>
+                <span>
+                  Attestation : <strong className="text-[#4cd7f6]">{runResult.authorizationLevel}</strong>
+                </span>
+              </>
+            )}
           </div>
         </div>
 
-        {/* Safe Mode Toggle & Emergency Control */}
         <div className="flex items-center gap-3">
           <button
             type="button"
@@ -109,8 +119,9 @@ export const ActiveTestsView: React.FC<ActiveTestsViewProps> = ({
                 ? 'bg-[#10b981]/15 border-[#10b981]/40 text-[#10b981]'
                 : 'bg-[#93000a]/20 border-[#ffb4ab]/30 text-[#ffb4ab]'
             }`}
+            title="Safe Mode ON : la famille déstructrice (nikto) est sautée"
           >
-            Mode Non-Destructif [{safeMode ? 'ACTIF' : 'OFF'}]
+            Safe Mode [{safeMode ? 'ACTIF' : 'OFF'}]
           </button>
 
           {onGoToLab && (
@@ -120,7 +131,7 @@ export const ActiveTestsView: React.FC<ActiveTestsViewProps> = ({
               className="px-3 py-1.5 rounded bg-[#262a35] hover:bg-[#323746] text-[#4cd7f6] border border-[#4cd7f6]/40 font-bold tracking-wide flex items-center gap-1.5 shadow-sm"
             >
               <span className="material-symbols-outlined text-[16px]">science</span>
-              <span>CYBER LAB (SIMULATIONS)</span>
+              <span>LABORATOIRE RÉEL</span>
             </button>
           )}
 
@@ -140,131 +151,116 @@ export const ActiveTestsView: React.FC<ActiveTestsViewProps> = ({
               className="px-4 py-1.5 rounded bg-[#4d8eff] hover:bg-[#3b82f6] text-white font-bold tracking-wide flex items-center gap-2 shadow-sm"
             >
               <span className="material-symbols-outlined text-[16px]">play_arrow</span>
-              <span>RELANCER LES TESTS</span>
+              <span>LANCER LA SUITE RÉELLE</span>
             </button>
           )}
         </div>
       </div>
 
-      {/* 6-step Intelligent Pipeline Breadcrumbs */}
-      <div className="bg-[#171b26] border border-[#24314c] rounded-lg p-3 overflow-x-auto shadow-sm">
-        <div className="flex items-center justify-between min-w-[700px] font-mono text-[11px]">
-          <div className="flex items-center gap-1.5 text-[#10b981]">
-            <span className="material-symbols-outlined text-[15px]">check_circle</span>
-            <span>1. RECON (100%)</span>
-          </div>
-          <span className="text-[#424754]">→</span>
-          <div className="flex items-center gap-1.5 text-[#10b981]">
-            <span className="material-symbols-outlined text-[15px]">check_circle</span>
-            <span>2. DISCOVERY ({endpointsTree.length} pts)</span>
-          </div>
-          <span className="text-[#424754]">→</span>
-          <div className="flex items-center gap-1.5 text-[#10b981]">
-            <span className="material-symbols-outlined text-[15px]">check_circle</span>
-            <span>3. CLASSIFICATION ({findings.length} APIs)</span>
-          </div>
-          <span className="text-[#424754]">→</span>
-          <div className="flex items-center gap-1.5 text-[#4cd7f6] font-bold">
-            <span className="material-symbols-outlined text-[15px] animate-spin">sync</span>
-            <span>4. CHOIX DES TESTS</span>
-          </div>
-          <span className="text-[#424754]">→</span>
-          <div className="flex items-center gap-1.5 text-[#4cd7f6] font-bold">
-            <span className="material-symbols-outlined text-[15px]">bolt</span>
-            <span>5. TEST & VALIDATION</span>
-          </div>
-          <span className="text-[#424754]">→</span>
-          <div className="flex items-center gap-1.5 text-[#8c909f]">
-            <span className="material-symbols-outlined text-[15px]">pending</span>
-            <span>6. RAPPORT</span>
-          </div>
+      {/* Empty state honnête avant première exécution */}
+      {!runResult && !isTesting && (
+        <div className="flex flex-col items-center justify-center p-10 text-center bg-[#0a0e18] rounded-lg border border-dashed border-[#24314c] font-mono text-xs">
+          <span className="material-symbols-outlined text-[40px] text-[#8c909f] mb-2">power_settings_new</span>
+          <p className="text-sm text-[#c2c6d6] font-semibold">Aucune suite active exécutée sur cette cible.</p>
+          <p className="text-[11px] text-[#8c909f] mt-1 max-w-md">
+            Cliquez sur « LANCER LA SUITE RÉELLE » : après attestation légale, 7 familles de sondes actives réelles
+            (en-têtes, verbes HTTP, TLS, fuzzing, injections, CORS, débit) seront exécutées contre {targetUrl}.
+            La famille déstructrice (nikto) nécessite l'attestation AGRESSIVE + Safe Mode OFF.
+          </p>
         </div>
-      </div>
+      )}
 
-      {/* Main Split View: Left Matrix / Right Live Terminal */}
+      {/* Main Split View: Left familles réelles / Right terminal */}
       <div className="grid grid-cols-1 lg:grid-cols-12 gap-5 flex-1 min-h-[520px]">
-        {/* Left Pane: Matrice des Familles de Tests Actifs */}
+        {/* Left: familles réelles */}
         <div className="lg:col-span-6 bg-[#171b26] border border-[#24314c] rounded-lg flex flex-col overflow-hidden">
           <div className="p-3.5 bg-[#0a0e18] border-b border-[#24314c] flex items-center justify-between">
             <div className="flex items-center gap-2">
               <span className="material-symbols-outlined text-[18px] text-[#4cd7f6]">grid_view</span>
               <h3 className="font-mono text-xs font-bold text-[#dfe2f1] uppercase tracking-wider">
-                Matrice des Familles de Tests Actifs
+                Familles de sondes actives réelles
               </h3>
             </div>
-            <span className="font-mono text-[11px] text-[#8c909f]">{testFamilies.length} Familles</span>
+            {runResult && (
+              <span className="font-mono text-[11px] text-[#8c909f]">
+                {runResult.scanId} • démarré {new Date(runResult.startedAt).toLocaleTimeString()}
+              </span>
+            )}
           </div>
 
           <div className="flex-1 overflow-y-auto p-3 flex flex-col gap-2 font-mono text-xs">
-            {testFamilies.map((family) => {
-              const isSelected = selectedFamily?.id === family.id;
-              return (
-                <div
-                  key={family.id}
-                  onClick={() => setSelectedFamily(family)}
-                  className={`p-3 rounded border transition-all cursor-pointer flex flex-col gap-1.5 ${
-                    isSelected
-                      ? 'bg-[#262a35] border-[#4cd7f6] shadow-sm'
-                      : 'bg-[#0a0e18] border-[#24314c] hover:bg-[#1c1f2a]'
-                  }`}
-                >
-                  <div className="flex items-center justify-between">
-                    <div className="flex items-center gap-2">
-                      <span className="material-symbols-outlined text-[18px] text-[#4cd7f6]">
-                        {family.icon}
+            {runResult ? (
+              runResult.families.map((family) => {
+                const isSelected = selectedFamilyId === family.id;
+                return (
+                  <div
+                    key={family.id}
+                    onClick={() => setSelectedFamilyId(family.id)}
+                    className={`p-3 rounded border transition-all cursor-pointer flex flex-col gap-1.5 ${
+                      isSelected
+                        ? 'bg-[#262a35] border-[#4cd7f6] shadow-sm'
+                        : 'bg-[#0a0e18] border-[#24314c] hover:bg-[#1c1f2a]'
+                    }`}
+                  >
+                    <div className="flex items-center justify-between gap-2">
+                      <div className="flex items-center gap-2 min-w-0">
+                        <strong className="text-[#dfe2f1] font-semibold truncate">{family.name}</strong>
+                        <span
+                          className={`px-1.5 py-0.2 rounded text-[9px] font-bold shrink-0 ${
+                            family.level === 'DESTRUCTIVE'
+                              ? 'bg-[#93000a]/30 text-[#ffb4ab]'
+                              : 'bg-[#4d8eff]/20 text-[#60a5fa]'
+                          }`}
+                        >
+                          {family.level}
+                        </span>
+                      </div>
+                      <span className={`px-2 py-0.5 rounded text-[10px] font-bold shrink-0 ${statusBadge(family.status)}`}>
+                        {family.status}
                       </span>
-                      <strong className="text-[#dfe2f1] font-semibold">{family.name}</strong>
                     </div>
-
-                    <span
-                      className={`px-2 py-0.5 rounded text-[10px] font-bold ${
-                        family.status === 'PASS'
-                          ? 'bg-[#10b981]/20 text-[#10b981]'
-                          : family.status === 'FAIL'
-                          ? 'bg-[#93000a]/40 text-[#ffb4ab] border border-[#ffb4ab]/30 animate-pulse'
-                          : family.status === 'TESTING'
-                          ? 'bg-[#3b82f6]/20 text-[#60a5fa] border border-[#3b82f6]/40'
-                          : 'bg-[#f59e0b]/20 text-[#fbbf24]'
-                      }`}
-                    >
-                      {family.status}
+                    <p className="text-[11px] text-[#8c909f] leading-snug">{family.summary}</p>
+                    <span className="text-[10px] text-[#64748b]">
+                      {family.requests} requête(s) réelle(s) • {family.durationMs} ms • {family.findings.length} finding(s)
                     </span>
                   </div>
-
-                  <p className="text-[11px] text-[#8c909f] leading-snug">{family.telemetrySummary}</p>
-                </div>
-              );
-            })}
+                );
+              })
+            ) : (
+              <div className="text-[#8c909f] text-[11px] p-4">Les familles apparaîtront ici avec leurs métriques réelles après exécution.</div>
+            )}
           </div>
 
-          {/* Selected Evidence Trace Drawer */}
-          {selectedFamily?.evidenceTrace && (
-            <div className="p-3 bg-[#0a0e18] border-t border-[#24314c] font-mono text-[11px] flex flex-col gap-1.5">
-              <div className="flex items-center justify-between text-[#ffb4ab] font-bold">
-                <span className="flex items-center gap-1.5">
-                  <span className="material-symbols-outlined text-[14px]">bug_report</span>
-                  Trace de validation en direct : {selectedFamily.name}
-                </span>
-                <span className="text-[10px] text-[#8c909f]">{selectedFamily.evidenceTrace.cwe}</span>
+          {/* Détail de la famille sélectionnée : logs réels + findings */}
+          {selectedFamily && (
+            <div className="p-3 bg-[#0a0e18] border-t border-[#24314c] font-mono text-[11px] flex flex-col gap-2 max-h-64 overflow-y-auto">
+              <div className="flex items-center justify-between text-[#4cd7f6] font-bold">
+                <span>Détail réel : {selectedFamily.name}</span>
+                <span className="text-[10px] text-[#8c909f]">{selectedFamily.summary}</span>
               </div>
-              <div className="bg-[#171b26] p-2 rounded border border-[#24314c] text-[#dfe2f1] overflow-x-auto text-[10px]">
-                <div className="text-[#4cd7f6]">{selectedFamily.evidenceTrace.req}</div>
-                <div className="text-[#10b981] mt-1">{selectedFamily.evidenceTrace.res}</div>
-              </div>
+              {selectedFamily.logs.map((log, i) => (
+                <div key={i} className="text-[#c2c6d6] leading-snug select-text">{log}</div>
+              ))}
+              {selectedFamily.findings.length > 0 && (
+                <div className="flex flex-col gap-1 pt-1 border-t border-[#24314c]">
+                  {selectedFamily.findings.map((f) => (
+                    <div key={f.id} className="text-[#ffb4ab]">
+                      [FINDING] {f.title} — CVSS {f.cvss} ({f.severity})
+                    </div>
+                  ))}
+                </div>
+              )}
             </div>
           )}
         </div>
 
-        {/* Right Pane: Interactive Live Terminal / Console */}
+        {/* Right: terminal live */}
         <div className="lg:col-span-6 bg-[#0a0e18] border border-[#24314c] rounded-lg flex flex-col overflow-hidden shadow-inner">
-          {/* Terminal Top Bar */}
           <div className="p-3 bg-[#171b26] border-b border-[#24314c] flex items-center justify-between font-mono text-xs">
             <div className="flex items-center gap-2">
               <span className="material-symbols-outlined text-[16px] text-[#10b981]">terminal</span>
-              <span className="text-[#dfe2f1] font-bold">Console d'Audit & Journal en Direct</span>
-              <span className="w-2 h-2 rounded-full bg-[#10b981] animate-ping ml-1"></span>
+              <span className="text-[#dfe2f1] font-bold">Journal d'audit en direct</span>
             </div>
-
             <div className="flex items-center gap-2">
               <input
                 type="text"
@@ -287,12 +283,10 @@ export const ActiveTestsView: React.FC<ActiveTestsViewProps> = ({
             </div>
           </div>
 
-          {/* Terminal Screen Output */}
           <div className="flex-1 p-4 overflow-y-auto font-mono text-[11px] leading-relaxed flex flex-col gap-1.5 select-text">
             {filteredLogs.map((log) => (
               <div key={log.id} className="flex items-start gap-2 hover:bg-[#171b26]/50 p-0.5 rounded">
                 <span className="text-[#424754] shrink-0 font-light">[{log.timestamp}]</span>
-
                 <span
                   className={`px-1.5 py-0.2 rounded text-[10px] font-bold shrink-0 ${
                     log.tag === 'FINDING' || log.tag === 'CRITICAL'
@@ -308,30 +302,14 @@ export const ActiveTestsView: React.FC<ActiveTestsViewProps> = ({
                 >
                   [{log.tag}]
                 </span>
-
-                <span
-                  className={`flex-1 ${
-                    log.tag === 'FINDING'
-                      ? 'text-[#ffb4ab] font-bold'
-                      : log.tag === 'VALIDATION'
-                      ? 'text-[#34d399]'
-                      : 'text-[#dfe2f1]'
-                  }`}
-                >
+                <span className={`flex-1 ${log.tag === 'FINDING' ? 'text-[#ffb4ab] font-bold' : 'text-[#dfe2f1]'}`}>
                   {log.text}
                 </span>
-
-                {log.confidence && (
-                  <span className="text-[#3b82f6] text-[10px] shrink-0">
-                    Confiance: {log.confidence}
-                  </span>
-                )}
               </div>
             ))}
             <div ref={terminalEndRef} />
           </div>
 
-          {/* Terminal Footer Status */}
           <div className="p-2.5 bg-[#171b26] border-t border-[#24314c] flex items-center justify-between font-mono text-[10px] text-[#8c909f]">
             <span>Lignes affichées : {filteredLogs.length}</span>
             <button
@@ -339,7 +317,7 @@ export const ActiveTestsView: React.FC<ActiveTestsViewProps> = ({
               onClick={onGoToResults}
               className="text-[#4cd7f6] hover:underline flex items-center gap-1"
             >
-              <span>Voir les {findings.length} preuves qualifiées dans l'Evidence Hub</span>
+              <span>Voir les preuves réelles dans l'Evidence Hub</span>
               <span className="material-symbols-outlined text-[13px]">arrow_forward</span>
             </button>
           </div>

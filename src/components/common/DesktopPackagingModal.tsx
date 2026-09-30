@@ -256,7 +256,7 @@ export const DesktopPackagingModal: React.FC<DesktopPackagingModalProps> = ({ is
                   </div>
                   <div className="flex items-start gap-2">
                     <span className="text-emerald-400">✓</span>
-                    <span><strong className="text-white">Stockage persistant SQLite :</strong> Tous les audits, résultats et simulations du Cyber Range sont archivés dans le fichier local <code className="text-[#4cd7f6]">shadow_core.db</code>.</span>
+                    <span><strong className="text-white">Stockage persistant SQLite :</strong> Tous les audits, résultats et sondes du Cyber Range sont archivés dans le fichier local <code className="text-[#4cd7f6]">shadow_core.db</code>.</span>
                   </div>
                   <div className="flex items-start gap-2">
                     <span className="text-emerald-400">✓</span>

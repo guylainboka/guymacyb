@@ -39,7 +39,7 @@ const PAYLOAD_TYPES: PayloadType[] = [
   },
   {
     id: 'ransomware_sim',
-    label: 'Simulation rançongicielle (bénigne)',
+    label: 'Rançongiciel de démonstration (payload bénin)',
     icon: 'lock',
     description: 'DÉMO — affiche une note de rançon, aucun chiffrement réel.',
     accent: '#10b981',

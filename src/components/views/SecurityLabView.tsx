@@ -1,26 +1,53 @@
-import React, { useState } from 'react';
-import { LabAttackVector, AttackCategory, Finding, LabSimulationResult } from '../../types';
+import React, { useEffect, useState } from 'react';
+import { LabAttackVector, Finding, LabProbeResult, TestAuthorization } from '../../types';
 import { LAB_ATTACK_VECTORS } from '../../data/labAttackVectors';
 
 interface SecurityLabViewProps {
+  targetConfig: { url: string; operatorId: string };
   onCommitFindingToApp: (finding: Finding) => void;
   onGoToReport: () => void;
   onGoToResults: () => void;
 }
 
+/**
+ * LABORATOIRE RÉEL — chaque sonde envoie de vraies requêtes HTTP à la cible
+ * autorisée (attestation légale obligatoire, journalisée côté serveur) et
+ * affiche les vraies réponses. Aucune réponse n'est fabriquée.
+ */
 export const SecurityLabView: React.FC<SecurityLabViewProps> = ({
+  targetConfig,
   onCommitFindingToApp,
   onGoToReport,
   onGoToResults,
 }) => {
   const [selectedVector, setSelectedVector] = useState<LabAttackVector>(LAB_ATTACK_VECTORS[0]);
   const [selectedCategory, setSelectedCategory] = useState<string>('ALL');
-  const [targetMode, setTargetMode] = useState<'vulnerable' | 'remediated'>('vulnerable');
-  const [isSimulating, setIsSimulating] = useState<boolean>(false);
+  const [isProbing, setIsProbing] = useState<boolean>(false);
   const [isBatchRunning, setIsBatchRunning] = useState<boolean>(false);
-  const [activeTab, setActiveTab] = useState<'simulation' | 'remediation' | 'code'>('simulation');
-  const [simulationHistory, setSimulationHistory] = useState<Record<string, LabSimulationResult>>({});
+  const [activeTab, setActiveTab] = useState<'probe' | 'remediation' | 'code'>('probe');
+  const [probeResults, setProbeResults] = useState<Record<string, LabProbeResult>>({});
   const [toastMessage, setToastMessage] = useState<string | null>(null);
+  const [authToken, setAuthToken] = useState<string>('');
+
+  // Attestation légale — le texte exact provient du serveur (source de vérité)
+  const [statements, setStatements] = useState<Record<string, string> | null>(null);
+  const [attestationChecked, setAttestationChecked] = useState<boolean>(false);
+  const [authorized, setAuthorized] = useState<boolean>(false);
+
+  useEffect(() => {
+    let cancelled = false;
+    fetch('/api/authorization/statements')
+      .then((r) => (r.ok ? r.json() : Promise.reject(new Error(`HTTP ${r.status}`))))
+      .then((data) => {
+        if (!cancelled) setStatements(data);
+      })
+      .catch(() => {
+        if (!cancelled) setStatements(null);
+      });
+    return () => {
+      cancelled = true;
+    };
+  }, []);
 
   const categories: { key: string; label: string; icon: string }[] = [
     { key: 'ALL', label: 'Tous les Vecteurs', icon: 'apps' },
@@ -38,77 +65,94 @@ export const SecurityLabView: React.FC<SecurityLabViewProps> = ({
 
   const showToast = (msg: string) => {
     setToastMessage(msg);
-    setTimeout(() => setToastMessage(null), 4000);
+    setTimeout(() => setToastMessage(null), 5000);
   };
 
-  // Simulation individuelle d'un vecteur
-  const handleRunSimulation = async (mode: 'vulnerable' | 'remediated' = targetMode) => {
-    setIsSimulating(true);
+  const buildAuthorization = (level: 'ACTIVE' | 'DESTRUCTIVE'): TestAuthorization | null => {
+    const statement = statements?.[level];
+    if (!statement) {
+      showToast('Déclaration légale indisponible — lancez le backend puis réessayez.');
+      return null;
+    }
+    return {
+      operatorId: targetConfig.operatorId || 'SEC-OPS-0982',
+      targetUrl: targetConfig.url,
+      level,
+      statement,
+      confirmedAt: new Date().toISOString(),
+    };
+  };
+
+  // Sonde réelle individuelle
+  const handleRunProbe = async () => {
+    if (!authorized) {
+      showToast('Attestation légale requise avant toute sonde réelle (cochez la déclaration ci-dessus).');
+      return;
+    }
+    const authorization = buildAuthorization('ACTIVE');
+    if (!authorization) return;
+    setIsProbing(true);
     try {
-      const res = await fetch('/api/lab/simulate', {
+      const res = await fetch('/api/lab/probe', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({
           vectorId: selectedVector.id,
-          targetMode: mode,
-          operatorId: 'SEC-OPS-0982',
+          targetUrl: targetConfig.url,
+          operatorId: targetConfig.operatorId || 'SEC-OPS-0982',
+          authToken: authToken || undefined,
+          authorization,
         }),
       });
+      const data = await res.json();
+      if (!res.ok) throw new Error(data?.error || `HTTP ${res.status}`);
 
-      if (!res.ok) throw new Error('Erreur API');
-      const data: LabSimulationResult = await res.json();
-
-      setSimulationHistory((prev) => ({
-        ...prev,
-        [`${selectedVector.id}-${mode}`]: data,
-      }));
-
-      if (data.findingCandidate) {
-        onCommitFindingToApp(data.findingCandidate);
+      const probe: LabProbeResult = data;
+      setProbeResults((prev) => ({ ...prev, [probe.vectorId]: probe }));
+      if (probe.findingCandidate) {
+        onCommitFindingToApp(probe.findingCandidate);
       }
-
       showToast(
-        mode === 'vulnerable'
-          ? `[VULNÉRABILITÉ CONFIRMÉE] Preuve non-destructive qualifiée pour ${selectedVector.name} !`
-          : `[DÉFENSE VALIDÉE] Attaque neutralisée avec succès par les règles de durcissement.`
+        `Sonde réelle exécutée : ${probe.requestsSent} requête(s) réelle(s) — verdict ${probe.verdict}.`
       );
     } catch (err: any) {
-      // Doctrine « zéro simulation » : l'ancien code générait un mockResult
-      // local (durationMs: 45, observations hardcodées, status VULNERABLE) et
-      // l'affichait comme si la simulation avait réussi — un faux succès
-      // dangereux pour un outil de sécurité. On affiche désormais honnêtement
-      // l'échec (comme le fait déjà le WiFi lab).
-      showToast(`Échec de la simulation : API injoignable`);
+      showToast(`Échec de la sonde réelle : ${err?.message || 'API injoignable'}`);
     } finally {
-      setIsSimulating(false);
+      setIsProbing(false);
     }
   };
 
-  // Lancement complet de tous les vecteurs du laboratoire
+  // Suite complète des 8 sondes réelles
   const handleRunFullBatch = async () => {
+    if (!authorized) {
+      showToast('Attestation légale requise avant la suite réelle.');
+      return;
+    }
+    const authorization = buildAuthorization('ACTIVE');
+    if (!authorization) return;
     setIsBatchRunning(true);
     try {
       const res = await fetch('/api/lab/generate-report', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ operatorId: 'SEC-OPS-0982' }),
+        body: JSON.stringify({
+          operatorId: targetConfig.operatorId || 'SEC-OPS-0982',
+          authorization,
+        }),
       });
-
-      if (res.ok) {
-        showToast('Laboratoire complet exécuté ! Tous les résultats ont été persistés dans SQLite.');
-      } else {
-        const errData = await res.json().catch(() => ({ error: 'Erreur inconnue' }));
-        showToast(`Échec de la suite complète : ${errData.error || `HTTP ${res.status}`}`);
-      }
+      const data = await res.json();
+      if (!res.ok) throw new Error(data?.error || `HTTP ${res.status}`);
+      showToast(
+        `Suite réelle terminée : ${data.vulnerableCount} vulnérable(s) / ${data.protectedCount} protégé(s) / ${data.inconclusiveCount} inconclusif(s) — ${data.totalRequests} requêtes réelles, rapport persisté (${data.scanId}).`
+      );
     } catch (err: any) {
-      showToast(`Échec de la suite complète : ${err?.message || 'API injoignable'}`);
+      showToast(`Échec de la suite réelle : ${err?.message || 'API injoignable'}`);
     } finally {
       setIsBatchRunning(false);
     }
   };
 
-  const currentResultKey = `${selectedVector.id}-${targetMode}`;
-  const currentResult = simulationHistory[currentResultKey];
+  const currentResult = probeResults[selectedVector.id];
 
   return (
     <div className="flex-1 overflow-y-auto p-5 flex flex-col gap-5 font-sans bg-[#0a0e18] text-[#dfe2f1]">
@@ -120,7 +164,7 @@ export const SecurityLabView: React.FC<SecurityLabViewProps> = ({
         </div>
       )}
 
-      {/* Top Banner & Cyber Lab Header */}
+      {/* Top Banner — Laboratoire RÉEL */}
       <div className="bg-[#171b26] border border-[#24314c] rounded-lg p-4 flex flex-wrap items-center justify-between gap-4 shadow-sm font-mono text-xs">
         <div className="flex items-center gap-3">
           <div className="p-2.5 rounded-lg bg-[#4d8eff]/10 border border-[#4d8eff]/30 text-[#4cd7f6]">
@@ -129,30 +173,30 @@ export const SecurityLabView: React.FC<SecurityLabViewProps> = ({
           <div>
             <div className="flex items-center gap-2">
               <h2 className="text-sm font-bold text-white tracking-wide">
-                LABORATOIRE D'ATTAQUE & SIMULATIONS DÉFENSIVES (CYBER RANGE)
+                LABORATOIRE D'ATTAQUES RÉEL (CYBER RANGE)
               </h2>
               <span className="px-2 py-0.5 rounded bg-[#93000a]/30 border border-[#ffb4ab]/30 text-[#ffb4ab] text-[10px] font-bold">
-                TESTS SÉCURISÉS EN BAC À SABLE
+                SONDES RÉELLES — ATTESTATION REQUISE
               </span>
             </div>
             <p className="text-[#8c909f] text-[11px] mt-0.5">
-              Simulez et observez les 8 vecteurs d'attaque critiques du Web (OWASP) en comparant la cible vulnérable et la cible protégée.
+              Les 8 vecteurs OWASP exécutés contre votre cible{' '}
+              <span className="text-[#4cd7f6]">{targetConfig.url}</span> — vraies requêtes, vraies réponses, vrais verdicts.
             </p>
           </div>
         </div>
 
-        {/* Global Action Buttons */}
         <div className="flex items-center gap-2.5">
           <button
             type="button"
             onClick={handleRunFullBatch}
-            disabled={isBatchRunning}
+            disabled={isBatchRunning || !authorized}
             className="px-3 py-1.5 rounded bg-[#262a35] hover:bg-[#323746] text-[#4cd7f6] border border-[#4cd7f6]/40 font-bold flex items-center gap-2 transition-all disabled:opacity-50"
           >
             <span className={`material-symbols-outlined text-[16px] ${isBatchRunning ? 'animate-spin' : ''}`}>
               {isBatchRunning ? 'sync' : 'auto_mode'}
             </span>
-            <span>{isBatchRunning ? 'Audit global en cours...' : 'Exécuter la Suite Complète (8)'}</span>
+            <span>{isBatchRunning ? 'Sondes réelles en cours…' : 'Exécuter la Suite Complète (8)'}</span>
           </button>
 
           <button
@@ -164,6 +208,44 @@ export const SecurityLabView: React.FC<SecurityLabViewProps> = ({
             <span>Voir Rapport d'Audit</span>
           </button>
         </div>
+      </div>
+
+      {/* Attestation légale obligatoire */}
+      <div className="bg-[#93000a]/10 border border-[#ffb4ab]/40 rounded-lg p-4 flex flex-col gap-2 font-sans text-xs">
+        <div className="flex items-center gap-2 text-[#ffb4ab] font-bold uppercase tracking-wider font-mono text-[11px]">
+          <span className="material-symbols-outlined text-[18px]">gavel</span>
+          <span>Autorisation légale de la cible — obligatoire avant toute sonde réelle</span>
+        </div>
+        {statements ? (
+          <>
+            <label className="flex items-start gap-3 p-3 bg-[#1c1f2a] rounded cursor-pointer border border-[#262a35] hover:border-[#3b82f6]/50 transition-colors select-text">
+              <input
+                type="checkbox"
+                checked={attestationChecked}
+                onChange={(e) => {
+                  setAttestationChecked(e.target.checked);
+                  setAuthorized(e.target.checked);
+                }}
+                className="mt-0.5 w-4 h-4 accent-[#3b82f6] rounded cursor-pointer shrink-0"
+              />
+              <span className="text-[#dfe2f1] leading-relaxed">{statements.ACTIVE}</span>
+            </label>
+            {authorized ? (
+              <span className="text-[#10b981] font-mono text-[11px] flex items-center gap-1.5">
+                <span className="material-symbols-outlined text-[15px]">verified_user</span>
+                Attestation ACTIVE acceptée — chaque sonde réelle sera journalisée avec votre identité ({targetConfig.operatorId || 'SEC-OPS-0982'}) et horodatée.
+              </span>
+            ) : (
+              <span className="text-[#8c909f] font-mono text-[11px]">
+                ⚠ Auditer un système sans autorisation est un délit pénal (Code pénal — atteintes aux STAD). Les sondes sont réelles.
+              </span>
+            )}
+          </>
+        ) : (
+          <span className="text-[#8c909f] font-mono text-[11px]">
+            Déclaration légale indisponible — vérifiez que le backend est démarré.
+          </span>
+        )}
       </div>
 
       {/* Categories Filter Tabs */}
@@ -185,26 +267,24 @@ export const SecurityLabView: React.FC<SecurityLabViewProps> = ({
         ))}
       </div>
 
-      {/* Main Grid: Left Vectors List / Right Interactive Sandbox Workspace */}
+      {/* Main Grid */}
       <div className="grid grid-cols-1 lg:grid-cols-12 gap-5 flex-1 min-h-[580px]">
-        {/* Left Column: Attack Vectors Catalog */}
+        {/* Left Column: Vectors Catalog */}
         <div className="lg:col-span-5 bg-[#171b26] border border-[#24314c] rounded-lg flex flex-col overflow-hidden">
           <div className="p-3 bg-[#0a0e18] border-b border-[#24314c] flex items-center justify-between">
             <div className="flex items-center gap-2">
               <span className="material-symbols-outlined text-[18px] text-[#4cd7f6]">target</span>
               <h3 className="font-mono text-xs font-bold text-[#dfe2f1] uppercase tracking-wider">
-                Catalogue des Vecteurs d'Attaque ({filteredVectors.length})
+                Catalogue des Vecteurs ({filteredVectors.length})
               </h3>
             </div>
-            <span className="font-mono text-[10px] text-[#8c909f]">Sondes Non-Destructives</span>
+            <span className="font-mono text-[10px] text-[#8c909f]">Sondes réelles</span>
           </div>
 
           <div className="flex-1 overflow-y-auto p-3 flex flex-col gap-2.5 font-mono text-xs">
             {filteredVectors.map((vector) => {
               const isSelected = selectedVector.id === vector.id;
-              const hasRunVuln = simulationHistory[`${vector.id}-vulnerable`];
-              const hasRunRemed = simulationHistory[`${vector.id}-remediated`];
-
+              const result = probeResults[vector.id];
               return (
                 <div
                   key={vector.id}
@@ -234,27 +314,23 @@ export const SecurityLabView: React.FC<SecurityLabViewProps> = ({
                     </span>
                   </div>
 
-                  <p className="text-[11px] text-[#c2c6d6] line-clamp-2 leading-relaxed font-sans">
-                    {vector.description}
-                  </p>
-
                   <div className="flex items-center justify-between text-[10px] pt-1 border-t border-[#24314c]/60">
                     <span className="text-[#8c909f]">{vector.cwe.split(':')[0]}</span>
-                    <div className="flex items-center gap-1.5">
-                      {hasRunVuln && (
-                        <span className="px-1.5 py-0.2 rounded bg-[#93000a]/30 text-[#ffb4ab] text-[9px] font-bold">
-                          Vuln. Confirmée
-                        </span>
-                      )}
-                      {hasRunRemed && (
-                        <span className="px-1.5 py-0.2 rounded bg-[#10b981]/20 text-[#34d399] text-[9px] font-bold">
-                          Défense Validée
-                        </span>
-                      )}
-                      {!hasRunVuln && !hasRunRemed && (
-                        <span className="text-[#64748b]">En attente de test</span>
-                      )}
-                    </div>
+                    {result ? (
+                      <span
+                        className={`px-1.5 py-0.2 rounded font-bold text-[9px] ${
+                          result.verdict === 'VULNERABLE'
+                            ? 'bg-[#93000a]/30 text-[#ffb4ab]'
+                            : result.verdict === 'PROTECTED'
+                            ? 'bg-[#10b981]/20 text-[#34d399]'
+                            : 'bg-[#f59e0b]/20 text-[#fbbf24]'
+                        }`}
+                      >
+                        {result.verdict} ({result.requestsSent} req)
+                      </span>
+                    ) : (
+                      <span className="text-[#64748b]">En attente de sonde réelle</span>
+                    )}
                   </div>
                 </div>
               );
@@ -262,9 +338,8 @@ export const SecurityLabView: React.FC<SecurityLabViewProps> = ({
           </div>
         </div>
 
-        {/* Right Column: Interactive Sandbox & Remediation Studio */}
+        {/* Right Column: Real Probe Workspace */}
         <div className="lg:col-span-7 bg-[#171b26] border border-[#24314c] rounded-lg flex flex-col overflow-hidden">
-          {/* Active Vector Header & Target Mode Toggle */}
           <div className="p-4 bg-[#0a0e18] border-b border-[#24314c] flex flex-col gap-3">
             <div className="flex flex-wrap items-center justify-between gap-2">
               <div>
@@ -274,184 +349,129 @@ export const SecurityLabView: React.FC<SecurityLabViewProps> = ({
                     {selectedVector.category}
                   </span>
                 </div>
-                <div className="text-[11px] text-[#8c909f] font-mono mt-0.5">
-                  {selectedVector.cwe}
-                </div>
-              </div>
-
-              {/* Mode Toggle: Vulnerable vs Remediated Target */}
-              <div className="flex items-center bg-[#171b26] p-1 rounded border border-[#24314c]">
-                <button
-                  type="button"
-                  onClick={() => setTargetMode('vulnerable')}
-                  className={`px-3 py-1 rounded text-xs font-mono font-bold transition-all flex items-center gap-1.5 ${
-                    targetMode === 'vulnerable'
-                      ? 'bg-[#93000a] text-white shadow'
-                      : 'text-[#8c909f] hover:text-[#dfe2f1]'
-                  }`}
-                >
-                  <span className="material-symbols-outlined text-[14px]">warning</span>
-                  <span>Cible Vulnérable</span>
-                </button>
-                <button
-                  type="button"
-                  onClick={() => setTargetMode('remediated')}
-                  className={`px-3 py-1 rounded text-xs font-mono font-bold transition-all flex items-center gap-1.5 ${
-                    targetMode === 'remediated'
-                      ? 'bg-[#10b981] text-white shadow'
-                      : 'text-[#8c909f] hover:text-[#dfe2f1]'
-                  }`}
-                >
-                  <span className="material-symbols-outlined text-[14px]">shield</span>
-                  <span>Cible Sécurisée (WAF)</span>
-                </button>
+                <div className="text-[11px] text-[#8c909f] font-mono mt-0.5">{selectedVector.cwe}</div>
               </div>
             </div>
 
-            {/* Navigation tabs for the selected vector */}
             <div className="flex items-center gap-2 font-mono text-xs pt-1 border-t border-[#24314c]">
-              <button
-                type="button"
-                onClick={() => setActiveTab('simulation')}
-                className={`px-3 py-1 rounded flex items-center gap-1.5 transition-all ${
-                  activeTab === 'simulation'
-                    ? 'bg-[#262a35] text-[#4cd7f6] font-bold border border-[#4cd7f6]/40'
-                    : 'text-[#8c909f] hover:text-white'
-                }`}
-              >
-                <span className="material-symbols-outlined text-[15px]">play_arrow</span>
-                <span>Simulation en Direct</span>
-              </button>
-              <button
-                type="button"
-                onClick={() => setActiveTab('remediation')}
-                className={`px-3 py-1 rounded flex items-center gap-1.5 transition-all ${
-                  activeTab === 'remediation'
-                    ? 'bg-[#262a35] text-[#4cd7f6] font-bold border border-[#4cd7f6]/40'
-                    : 'text-[#8c909f] hover:text-white'
-                }`}
-              >
-                <span className="material-symbols-outlined text-[15px]">verified_user</span>
-                <span>Contremesures & Remédiation</span>
-              </button>
-              <button
-                type="button"
-                onClick={() => setActiveTab('code')}
-                className={`px-3 py-1 rounded flex items-center gap-1.5 transition-all ${
-                  activeTab === 'code'
-                    ? 'bg-[#262a35] text-[#4cd7f6] font-bold border border-[#4cd7f6]/40'
-                    : 'text-[#8c909f] hover:text-white'
-                }`}
-              >
-                <span className="material-symbols-outlined text-[15px]">code</span>
-                <span>Code Avant / Après</span>
-              </button>
+              {([
+                ['probe', 'play_arrow', 'Sonde Réelle'],
+                ['remediation', 'verified_user', 'Contremesures & Remédiation'],
+                ['code', 'code', 'Code Avant / Après'],
+              ] as const).map(([key, icon, label]) => (
+                <button
+                  key={key}
+                  type="button"
+                  onClick={() => setActiveTab(key)}
+                  className={`px-3 py-1 rounded flex items-center gap-1.5 transition-all ${
+                    activeTab === key
+                      ? 'bg-[#262a35] text-[#4cd7f6] font-bold border border-[#4cd7f6]/40'
+                      : 'text-[#8c909f] hover:text-white'
+                  }`}
+                >
+                  <span className="material-symbols-outlined text-[15px]">{icon}</span>
+                  <span>{label}</span>
+                </button>
+              ))}
             </div>
           </div>
 
-          {/* Interactive Tab 1: Live Simulation Screen */}
-          {activeTab === 'simulation' && (
+          {/* Tab 1: Sonde réelle */}
+          {activeTab === 'probe' && (
             <div className="flex-1 p-4 overflow-y-auto flex flex-col gap-4 font-mono text-xs">
-              {/* Safe Payload Display Box */}
               <div className="bg-[#0a0e18] border border-[#24314c] rounded-lg p-3 flex flex-col gap-2">
                 <div className="flex items-center justify-between text-[11px] text-[#8c909f]">
                   <span className="flex items-center gap-1 text-[#4cd7f6]">
                     <span className="material-symbols-outlined text-[15px]">send</span>
-                    <span>Sonde de Test Sécurisée (Non-Destructive) :</span>
+                    <span>Sonde de détection (payload réel, 1 tir, non altérant) :</span>
                   </span>
-                  <span className="text-[10px] text-[#10b981]">Protocole Éthique Conforme</span>
+                  <span className="text-[10px] text-[#10b981]">Requêtes réelles contre {targetConfig.url}</span>
                 </div>
-                <div className="bg-[#171b26] p-2.5 rounded border border-[#24314c] text-[#dfe2f1] font-mono text-xs select-all">
+                <div className="bg-[#171b26] p-2.5 rounded border border-[#24314c] text-[#dfe2f1] font-mono text-xs select-all max-h-24 overflow-y-auto">
                   {selectedVector.safeTestPayload}
                 </div>
-                <p className="text-[11px] text-[#8c909f] font-sans">
-                  Cette sonde est spécialement calibrée pour démontrer la faisabilité sans perturber le service ni corrompre les données applicatives.
-                </p>
+                {selectedVector.id === 'jwt-alg-none' && (
+                  <div className="flex flex-col gap-1">
+                    <label className="text-[11px] text-[#8c909f]">
+                      Jeton JWT valide de l'opérateur (requis pour tester alg=none réellement) :
+                    </label>
+                    <input
+                      type="text"
+                      value={authToken}
+                      onChange={(e) => setAuthToken(e.target.value)}
+                      placeholder="eyJhbGciOiJIUzI1NiIs..."
+                      className="bg-[#171b26] border border-[#24314c] rounded px-2 py-1.5 text-[11px] text-[#dfe2f1] focus:outline-none focus:border-[#4cd7f6]/60 select-text"
+                    />
+                  </div>
+                )}
               </div>
 
-              {/* Simulation Trigger Bar */}
               <div className="flex items-center justify-between bg-[#121622] p-3 rounded border border-[#24314c]">
-                <div className="flex items-center gap-2">
-                  <span
-                    className={`w-2.5 h-2.5 rounded-full ${
-                      targetMode === 'vulnerable' ? 'bg-[#ffb4ab] animate-pulse' : 'bg-[#10b981]'
-                    }`}
-                  ></span>
-                  <span className="text-[11px] text-[#c2c6d6]">
-                    Environnement de test :{' '}
-                    <strong className={targetMode === 'vulnerable' ? 'text-[#ffb4ab]' : 'text-[#10b981]'}>
-                      {targetMode === 'vulnerable' ? 'Cible sans protection (Sandbox Flaw)' : 'Cible protégée (WAF & Controls)'}
-                    </strong>
-                  </span>
-                </div>
-
+                <span className="text-[11px] text-[#c2c6d6] flex items-center gap-2">
+                  <span className="w-2.5 h-2.5 rounded-full bg-[#ffb4ab] animate-pulse"></span>
+                  La sonde enverra de <strong className="text-[#ffb4ab]">vraies requêtes</strong> à{' '}
+                  <strong className="text-[#4cd7f6]">{targetConfig.url}</strong>
+                </span>
                 <button
                   type="button"
-                  onClick={() => handleRunSimulation(targetMode)}
-                  disabled={isSimulating}
-                  className={`px-4 py-2 rounded text-white font-bold flex items-center gap-2 shadow-md transition-all ${
-                    targetMode === 'vulnerable'
-                      ? 'bg-[#93000a] hover:bg-[#ba1a1a] shadow-red-950/40'
-                      : 'bg-[#10b981] hover:bg-[#059669] shadow-green-950/40'
-                  } disabled:opacity-50`}
+                  onClick={handleRunProbe}
+                  disabled={isProbing || !authorized}
+                  className="px-4 py-2 rounded text-white font-bold flex items-center gap-2 shadow-md transition-all bg-[#93000a] hover:bg-[#ba1a1a] shadow-red-950/40 disabled:opacity-50"
                 >
-                  <span className={`material-symbols-outlined text-[16px] ${isSimulating ? 'animate-spin' : ''}`}>
-                    {isSimulating ? 'sync' : 'play_circle'}
+                  <span className={`material-symbols-outlined text-[16px] ${isProbing ? 'animate-spin' : ''}`}>
+                    {isProbing ? 'sync' : 'play_circle'}
                   </span>
-                  <span>{isSimulating ? 'Simulation en cours...' : 'Lancer la Simulation'}</span>
+                  <span>{isProbing ? 'Sonde réelle en cours…' : 'Lancer la Sonde Réelle'}</span>
                 </button>
               </div>
 
-              {/* Execution Results View */}
               {currentResult ? (
                 <div className="flex flex-col gap-3">
-                  <div className="grid grid-cols-3 gap-3">
+                  <div className="grid grid-cols-4 gap-3">
                     <div className="bg-[#0a0e18] p-2.5 rounded border border-[#24314c] flex flex-col">
-                      <span className="text-[10px] text-[#8c909f]">Statut de la Réponse</span>
+                      <span className="text-[10px] text-[#8c909f]">Verdict RÉEL</span>
                       <strong
                         className={`text-sm ${
-                          currentResult.status === 'VULNERABLE' ? 'text-[#ffb4ab]' : 'text-[#34d399]'
+                          currentResult.verdict === 'VULNERABLE'
+                            ? 'text-[#ffb4ab]'
+                            : currentResult.verdict === 'PROTECTED'
+                            ? 'text-[#34d399]'
+                            : 'text-[#fbbf24]'
                         }`}
                       >
-                        {currentResult.httpStatus} {currentResult.httpStatus === 200 ? 'OK' : 'BLOCKED'}
+                        {currentResult.verdict}
                       </strong>
                     </div>
-
                     <div className="bg-[#0a0e18] p-2.5 rounded border border-[#24314c] flex flex-col">
-                      <span className="text-[10px] text-[#8c909f]">Latence d'analyse</span>
-                      <strong className="text-sm text-[#4cd7f6]">{currentResult.durationMs} ms</strong>
+                      <span className="text-[10px] text-[#8c909f]">HTTP</span>
+                      <strong className="text-sm text-[#4cd7f6]">{currentResult.httpStatus ?? '—'}</strong>
                     </div>
-
                     <div className="bg-[#0a0e18] p-2.5 rounded border border-[#24314c] flex flex-col">
-                      <span className="text-[10px] text-[#8c909f]">Interception WAF</span>
-                      <strong
-                        className={`text-sm ${
-                          currentResult.wafIntercepted ? 'text-[#34d399]' : 'text-[#ffb4ab]'
-                        }`}
-                      >
-                        {currentResult.wafIntercepted ? 'OUI (Actif)' : 'NON (Désactivé)'}
-                      </strong>
+                      <span className="text-[10px] text-[#8c909f]">Requêtes réelles</span>
+                      <strong className="text-sm text-[#dfe2f1]">{currentResult.requestsSent}</strong>
+                    </div>
+                    <div className="bg-[#0a0e18] p-2.5 rounded border border-[#24314c] flex flex-col">
+                      <span className="text-[10px] text-[#8c909f]">Durée réelle</span>
+                      <strong className="text-sm text-[#dfe2f1]">{currentResult.durationMs} ms</strong>
                     </div>
                   </div>
 
-                  {/* HTTP Telemetry Response Inspector */}
                   <div className="bg-[#0a0e18] border border-[#24314c] rounded-lg p-3 flex flex-col gap-1.5">
                     <span className="text-[11px] text-[#8c909f] font-bold">
-                      Charge utile & Échange HTTP retourné par le bac à sable :
+                      Échange HTTP RÉEL capturé (requête envoyée → réponse de la cible) :
                     </span>
-                    <pre className="bg-[#171b26] p-3 rounded border border-[#24314c] text-[11px] text-[#dfe2f1] overflow-x-auto leading-relaxed max-h-44">
-                      {currentResult.responsePreview}
+                    <pre className="bg-[#171b26] p-3 rounded border border-[#24314c] text-[11px] text-[#dfe2f1] overflow-x-auto leading-relaxed max-h-44 select-text whitespace-pre-wrap">
+                      {currentResult.realResponse}
                     </pre>
                   </div>
 
-                  {/* Security Observations */}
                   <div className="bg-[#0a0e18] border border-[#24314c] rounded-lg p-3 flex flex-col gap-2">
                     <span className="text-[11px] text-[#4cd7f6] font-bold flex items-center gap-1.5">
                       <span className="material-symbols-outlined text-[15px]">analytics</span>
-                      <span>Observations & Déduction d'audit de sécurité :</span>
+                      <span>Observations réelles :</span>
                     </span>
                     <ul className="flex flex-col gap-1 text-[11px] text-[#c2c6d6] font-sans list-disc list-inside">
-                      {currentResult.securityObservations.map((obs, idx) => (
+                      {currentResult.observations.map((obs, idx) => (
                         <li key={idx} className="leading-snug">{obs}</li>
                       ))}
                     </ul>
@@ -459,21 +479,17 @@ export const SecurityLabView: React.FC<SecurityLabViewProps> = ({
                 </div>
               ) : (
                 <div className="flex-1 flex flex-col items-center justify-center p-8 text-center bg-[#0a0e18] rounded-lg border border-dashed border-[#24314c]">
-                  <span className="material-symbols-outlined text-[40px] text-[#8c909f] mb-2">
-                    biotech
-                  </span>
-                  <p className="text-xs text-[#c2c6d6] font-semibold">
-                    Aucune simulation active pour ce vecteur dans le mode sélectionné ({targetMode}).
-                  </p>
+                  <span className="material-symbols-outlined text-[40px] text-[#8c909f] mb-2">biotech</span>
+                  <p className="text-xs text-[#c2c6d6] font-semibold">Aucune sonde réelle exécutée pour ce vecteur.</p>
                   <p className="text-[11px] text-[#8c909f] mt-1 max-w-sm">
-                    Cliquez sur « Lancer la Simulation » ci-dessus pour observer le comportement de l'application et la qualification de preuve.
+                    Cliquez sur « Lancer la Sonde Réelle » pour envoyer de vraies requêtes à la cible et analyser ses vraies réponses.
                   </p>
                 </div>
               )}
             </div>
           )}
 
-          {/* Interactive Tab 2: Remediation & Defensive Controls */}
+          {/* Tab 2: Contremesures (contenu pédagogique du catalogue) */}
           {activeTab === 'remediation' && (
             <div className="flex-1 p-4 overflow-y-auto flex flex-col gap-4 font-sans text-xs">
               <div className="bg-[#0a0e18] border border-[#24314c] rounded-lg p-3 flex flex-col gap-1.5 font-mono">
@@ -486,7 +502,7 @@ export const SecurityLabView: React.FC<SecurityLabViewProps> = ({
               <div className="bg-[#0a0e18] border border-[#24314c] rounded-lg p-4 flex flex-col gap-3 font-mono">
                 <div className="flex items-center gap-2 text-[#34d399] font-bold text-xs">
                   <span className="material-symbols-outlined text-[18px]">verified</span>
-                  <span>4 Mesures de Durcissement Recommandées (Blue Team) :</span>
+                  <span>Mesures de Durcissement Recommandées (Blue Team) :</span>
                 </div>
                 <div className="grid grid-cols-1 gap-2.5 font-sans">
                   {selectedVector.defensiveControls.map((step, idx) => (
@@ -516,7 +532,7 @@ export const SecurityLabView: React.FC<SecurityLabViewProps> = ({
             </div>
           )}
 
-          {/* Interactive Tab 3: Code Comparison Before / After */}
+          {/* Tab 3: Code Avant / Après (pédagogique) */}
           {activeTab === 'code' && (
             <div className="flex-1 p-4 overflow-y-auto flex flex-col gap-4 font-mono text-xs">
               <div className="flex items-center justify-between">
@@ -526,7 +542,6 @@ export const SecurityLabView: React.FC<SecurityLabViewProps> = ({
                 <span className="text-[10px] text-[#10b981]">Conforme OWASP Benchmark</span>
               </div>
 
-              {/* Vulnerable Code Snippet */}
               <div className="bg-[#0a0e18] border border-[#93000a]/50 rounded-lg overflow-hidden flex flex-col">
                 <div className="px-3 py-1.5 bg-[#93000a]/20 border-b border-[#93000a]/40 flex items-center justify-between">
                   <span className="text-[#ffb4ab] font-bold text-[11px] flex items-center gap-1">
@@ -534,12 +549,11 @@ export const SecurityLabView: React.FC<SecurityLabViewProps> = ({
                     <span>Implémentation Vulnérable (À Proscrire)</span>
                   </span>
                 </div>
-                <pre className="p-3 text-[11px] text-[#ffb4ab] overflow-x-auto leading-relaxed bg-[#0a0e18]">
+                <pre className="p-3 text-[11px] text-[#ffb4ab] overflow-x-auto leading-relaxed bg-[#0a0e18] select-text">
                   {selectedVector.remediationCodeExample.vulnerable}
                 </pre>
               </div>
 
-              {/* Fixed / Hardened Code Snippet */}
               <div className="bg-[#0a0e18] border border-[#10b981]/50 rounded-lg overflow-hidden flex flex-col">
                 <div className="px-3 py-1.5 bg-[#10b981]/20 border-b border-[#10b981]/40 flex items-center justify-between">
                   <span className="text-[#34d399] font-bold text-[11px] flex items-center gap-1">
@@ -558,7 +572,7 @@ export const SecurityLabView: React.FC<SecurityLabViewProps> = ({
                     <span>Copier le correctif</span>
                   </button>
                 </div>
-                <pre className="p-3 text-[11px] text-[#34d399] overflow-x-auto leading-relaxed bg-[#0a0e18]">
+                <pre className="p-3 text-[11px] text-[#34d399] overflow-x-auto leading-relaxed bg-[#0a0e18] select-text">
                   {selectedVector.remediationCodeExample.fixed}
                 </pre>
               </div>

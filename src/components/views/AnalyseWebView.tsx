@@ -45,7 +45,7 @@ export const AnalyseWebView: React.FC<AnalyseWebViewProps> = ({
     return matchesSelf || matchesChild;
   });
 
-  // Doctrine « zéro simulation » : tous les compteurs sont DÉRIVÉS des vraies
+  // Doctrine « zéro invention » : tous les compteurs sont DÉRIVÉS des vraies
   // données passées en props (endpointsTree + findings). Aucune valeur
   // hardcodée. L'ancien code affichait « 137 URLs / 42 API / 9 tech / 3H-7M-11L »
   // en permanence, même sans scan.

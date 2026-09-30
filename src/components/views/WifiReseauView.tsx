@@ -273,7 +273,7 @@ export const WifiReseauView: React.FC<WifiReseauViewProps> = ({ onGoToLab, onGoT
                 </button>
               </div>
               <p className="text-[11px] text-[#8c909f] mt-2 font-mono">
-                Utilise iw → iwlist → aircrack-ng → simulation. Sans sudo, bascule en mode simulation réaliste.
+                Utilise iw → iwlist → aircrack-ng (outils réels via WSL). Sans matériel radio réel, le script renvoie une erreur honnête — jamais de réseaux fabriqués.
               </p>
             </div>
 
@@ -535,7 +535,7 @@ export const WifiReseauView: React.FC<WifiReseauViewProps> = ({ onGoToLab, onGoT
                 </button>
               </div>
               <p className="text-[11px] text-[#8c909f] mt-2 font-mono">
-                Nécessite le mode monitor (airmon-ng). Sans sudo, bascule en simulation réaliste.
+                Nécessite le mode monitor (airmon-ng). Sans matériel radio réel, le script renvoie une erreur honnête.
               </p>
             </div>
 
@@ -617,7 +617,7 @@ export const WifiReseauView: React.FC<WifiReseauViewProps> = ({ onGoToLab, onGoT
               <span className="material-symbols-outlined text-[16px] mt-0.5">warning</span>
               <div>
                 <strong>Attaques WiFi réelles</strong> — nécessitent Linux root + aircrack-ng + carte WiFi USB mode monitor.
-                Sans sudo, les scripts basculent en <strong>mode simulation réaliste</strong> pour la démonstration.
+                Sans matériel radio réel, les scripts renvoient une erreur honnête (aucun réseau fabriqué).
                 À n'utiliser que sur vos propres réseaux ou avec autorisation écrite.
               </div>
             </div>

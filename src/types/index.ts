@@ -52,19 +52,40 @@ export interface LabAttackVector {
   };
 }
 
-export interface LabSimulationResult {
+// Résultat d'une sonde RÉELLE du laboratoire (vraies requêtes, vraies réponses)
+export interface LabProbeResult {
   vectorId: string;
   vectorName: string;
-  timestamp: string;
-  targetMode: 'vulnerable' | 'remediated';
-  status: 'VULNERABLE' | 'PROTECTED' | 'BLOCKED';
-  probeSent: string;
-  httpStatus: number;
+  targetUrl: string;
+  verdict: 'VULNERABLE' | 'PROTECTED' | 'INCONCLUSIVE';
+  httpStatus: number | null;
   durationMs: number;
-  responsePreview: string;
-  wafIntercepted: boolean;
-  securityObservations: string[];
+  requestsSent: number;
+  probeSent: string;
+  realResponse: string;
+  observations: string[];
   findingCandidate?: Finding;
+}
+
+// Attestation légale d'audit (miroir client du modèle serveur)
+export interface TestAuthorization {
+  operatorId: string;
+  targetUrl: string;
+  level: 'ACTIVE' | 'DESTRUCTIVE';
+  statement: string;
+  confirmedAt: string;
+}
+
+export interface RetestResult {
+  findingId: string;
+  targetUrl: string;
+  retestAt: string;
+  verdict: 'CONFIRMED' | 'RESOLVED' | 'INCONCLUSIVE';
+  method: string;
+  durationMs: number;
+  requestsSent: number;
+  details: string[];
+  realEvidence: string | null;
 }
 
 export interface TargetConfig {
@@ -300,18 +321,29 @@ export interface WifiLabVector {
   };
 }
 
-export interface WifiLabSimulationResult {
-  vectorId: string;
-  vectorName: string;
-  timestamp: string;
-  targetMode: 'vulnerable' | 'remediated';
-  status: 'VULNERABLE' | 'PROTECTED' | 'BLOCKED';
-  probeSent: string;
+// Résultat d'une famille de tests actifs RÉELS
+export interface ActiveFamilyResult {
+  id: string;
+  name: string;
+  level: 'ACTIVE' | 'DESTRUCTIVE';
+  status: 'PASS' | 'FAIL' | 'SKIP' | 'ERROR';
+  requests: number;
   durationMs: number;
-  responsePreview: string;
-  apIntercepted: boolean;
-  securityObservations: string[];
-  findingCandidate?: Finding;
+  summary: string;
+  logs: string[];
+  findings: Finding[];
+}
+
+export interface ActiveRunResult {
+  scanId: string;
+  targetUrl: string;
+  startedAt: string;
+  durationMs: number;
+  totalRequests: number;
+  findingsCreated: number;
+  families: ActiveFamilyResult[];
+  safeMode: boolean;
+  authorizationLevel: 'ACTIVE' | 'DESTRUCTIVE';
 }
 
 // ============================================================

@@ -1,5 +1,5 @@
 import React, { useState } from 'react';
-import { ModuleView, TargetConfig, HistoricalTarget, TerminalLog, Finding, EndpointItem, ActiveTestFamily } from './types';
+import { ModuleView, TargetConfig, HistoricalTarget, TerminalLog, Finding, EndpointItem, ActiveTestFamily, ActiveRunResult } from './types';
 import { Header } from './components/common/Header';
 import { Sidebar } from './components/common/Sidebar';
 import { Footer } from './components/common/Footer';
@@ -42,7 +42,7 @@ export default function App() {
   const [isTesting, setIsTesting] = useState<boolean>(false);
   const [engineStatus, setEngineStatus] = useState<string>('Prêt pour évaluation');
 
-  // Doctrine « zéro simulation » : tous les états démarrent VIDES. Aucune
+  // Doctrine « zéro invention » : tous les états démarrent VIDES. Aucune
   // donnée fictive n'est chargée au démarrage — l'utilisateur voit un
   // tableau de bord honnête (« Aucune donnée disponible ») jusqu'à ce qu'il
   // lance un vrai scan. Les cibles/findings/endpoints réels proviennent du
@@ -50,8 +50,10 @@ export default function App() {
   const [historicalTargets, setHistoricalTargets] = useState<HistoricalTarget[]>([]);
   const [endpointsTree, setEndpointsTree] = useState<EndpointItem[]>([]);
   const [findings, setFindings] = useState<Finding[]>([]);
-  const [testFamilies] = useState<ActiveTestFamily[]>([]);
+  const [, setTestFamilies] = useState<ActiveTestFamily[]>([]);
   const [terminalLogs, setTerminalLogs] = useState<TerminalLog[]>([]);
+  // Résultat RÉEL de la dernière suite active exécutée (/api/tests/active/run)
+  const [activeRun, setActiveRun] = useState<ActiveRunResult | null>(null);
 
   // Modals state
   const [isAuthModalOpen, setIsAuthModalOpen] = useState<boolean>(false);
@@ -82,7 +84,7 @@ export default function App() {
         }
       } catch (err: any) {
         if (err?.name === 'AbortError') return; // composant démonté — ignore
-        // Doctrine « zéro simulation » : on n'affiche plus de fallback implicite.
+        // Doctrine « zéro invention » : on n'affiche plus de fallback implicite.
         // Le dashboard reste vide jusqu'à un vrai scan réussi.
         console.warn('Backend SQLite non joignable (les données réelles seront chargées au prochain scan) :', err);
       }
@@ -152,7 +154,7 @@ export default function App() {
       setIsAnalyzing(false);
       setCurrentView('analyse-web');
     } catch (err: any) {
-      // Doctrine "zéro simulation" : un échec d'analyse doit être affiché comme
+      // Doctrine "zéro invention" : un échec d'analyse doit être affiché comme
       // tel. L'ancien code affichait un faux succès ("Cartographie terminée •
       // 137 endpoints") même sur erreur backend — contre-productif pour un
       // outil de sécurité.
@@ -167,38 +169,107 @@ export default function App() {
     setIsAuthModalOpen(true);
   };
 
-  // Start confirmed active test
-  // Doctrine « zéro simulation » : l'ancien code simulait une suite de tests
-  // actifs via un setTimeout(4500ms) puis affichait « 3 vulnérabilités
-  // confirmées » SANS AUCUN appel backend. C'était un mensonge dangereux dans
-  // un outil de sécurité. En attendant l'implémentation d'une vraie API
-  // `/api/tests/active/run` (exécutant de vraies sondes contrôlées), on
-  // affiche honnêtement que la fonctionnalité n'est pas encore implémentée.
-  const handleStartAttackConfirmed = () => {
+  // Lance la suite de tests actifs RÉELS après attestation légale.
+  // Envoie de vraies requêtes réseau via /api/tests/active/run (attestation
+  // vérifiée et journalisée côté serveur). Les findings réels retournés sont
+  // fusionnés dans l'état App et persistés côté backend.
+  const handleStartAttackConfirmed = async (
+    level: 'ACTIVE' | 'DESTRUCTIVE',
+    statement: string,
+    confirmedAt: string
+  ) => {
     setIsAuthModalOpen(false);
-    setEngineStatus('Tests actifs : fonctionnalité non configurée');
+    setIsTesting(true);
+    setCurrentView('tests-actifs-and-attaque');
+    setEngineStatus(`Sondes actives réelles en cours contre ${targetConfig.url} (attestation ${level})…`);
     setTerminalLogs((prev) => [
       ...prev,
       {
         id: String(Date.now()),
         timestamp: new Date().toLocaleTimeString(),
-        tag: 'WARN',
-        text: `Tests actifs non implémentés — aucune sonde lancée sur ${targetConfig.url}. La fonctionnalité sera disponible après l'ajout de l'API /api/tests/active/run.`,
+        tag: 'ACTIVE' as const,
+        text: `Suite active réelle démarrée sur ${targetConfig.url} — attestation ${level} enregistrée (${confirmedAt}).`,
       },
     ]);
-    setCurrentView('tests-actifs-and-attaque');
+
+    try {
+      const res = await fetch('/api/tests/active/run', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          url: targetConfig.url,
+          operatorId: targetConfig.operatorId || 'SEC-OPS-0982',
+          safeMode,
+          authorization: {
+            operatorId: targetConfig.operatorId || 'SEC-OPS-0982',
+            targetUrl: targetConfig.url,
+            level,
+            statement,
+            confirmedAt,
+          },
+        }),
+      });
+      const data = await res.json();
+      if (!res.ok) throw new Error(data?.error || `HTTP ${res.status}`);
+
+      const run: ActiveRunResult = data;
+      setActiveRun(run);
+
+      // Fusion des findings réels créés par la suite (dédoublonnage par id)
+      const newFindings = run.families.flatMap((f) => f.findings);
+      if (newFindings.length > 0) {
+        setFindings((prev) => {
+          const existing = new Set(prev.map((f) => f.id));
+          return [...newFindings.filter((f) => !existing.has(f.id)), ...prev];
+        });
+      }
+
+      // Journal réel : une ligne par famille
+      setTerminalLogs((prev) => [
+        ...prev,
+        ...run.families.map((f) => ({
+          id: `log-${f.id}-${Date.now()}`,
+          timestamp: new Date().toLocaleTimeString(),
+          tag: (f.findings.length > 0 ? 'FINDING' : 'TEST') as TerminalLog['tag'],
+          text: `${f.name} → ${f.status} : ${f.summary} (${f.requests} requête(s) réelle(s), ${f.durationMs}ms)`,
+        })),
+        {
+          id: `log-done-${Date.now()}`,
+          timestamp: new Date().toLocaleTimeString(),
+          tag: 'VALIDATION' as const,
+          text: `Suite active réelle terminée : ${run.totalRequests} requêtes réelles, ${run.findingsCreated} finding(s) persisté(s), ${run.durationMs}ms (scan ${run.scanId}).`,
+        },
+      ]);
+      setEngineStatus(
+        `Suite active réelle terminée • ${run.totalRequests} requêtes réelles • ${run.findingsCreated} finding(s) réels • ${run.durationMs}ms`
+      );
+    } catch (err: any) {
+      setIsTesting(false);
+      setEngineStatus(`Échec de la suite active réelle : ${err?.message || 'erreur réseau'}`);
+      setTerminalLogs((prev) => [
+        ...prev,
+        {
+          id: String(Date.now()),
+          timestamp: new Date().toLocaleTimeString(),
+          tag: 'WARN' as const,
+          text: `Échec de la suite active réelle : ${err?.message || 'erreur réseau'} — aucune donnée fabriquée pour compenser.`,
+        },
+      ]);
+    } finally {
+      setIsTesting(false);
+    }
   };
 
   const handleStopTest = () => {
     setIsTesting(false);
-    setEngineStatus("Arrêté d'urgence par l'opérateur");
+    setEngineStatus("Arrêt demandé par l'opérateur");
     setTerminalLogs((prev) => [
       ...prev,
       {
         id: String(Date.now()),
         timestamp: new Date().toLocaleTimeString(),
         tag: 'WARN',
-        text: 'EMERGENCY STOP initiated by operator. Workers terminated cleanly.',
+        text: "STOP D'URGENCE demandé : la vue cesse d'attendre le résultat. Les requêtes réseau déjà envoyées par la sonde en cours ne peuvent pas être rappelées ; les findings déjà persistés restent en base (traçabilité réelle).",
       },
     ]);
   };
@@ -268,7 +339,7 @@ export default function App() {
               findings={findings}
               onTransferToAttack={() => {
                 setCurrentView('tests-actifs-and-attaque');
-                handleStartAttackConfirmed();
+                setIsAuthModalOpen(true); // autorisation légale obligatoire avant les sondes réelles
               }}
               onRescan={handleLaunchAnalysis}
               targetUrl={targetConfig.url}
@@ -277,13 +348,12 @@ export default function App() {
 
           {currentView === 'tests-actifs-and-attaque' && (
             <ActiveTestsView
-              testFamilies={testFamilies}
+              targetUrl={targetConfig.url}
+              runResult={activeRun}
               terminalLogs={terminalLogs}
-              endpointsTree={endpointsTree}
-              findings={findings}
               isTesting={isTesting}
               onStopTest={handleStopTest}
-              onStartTest={handleStartAttackConfirmed}
+              onStartTest={() => setIsAuthModalOpen(true)}
               onGoToResults={() => setCurrentView('resultats-and-preuves')}
               onGoToLab={() => setCurrentView('laboratoire-attaques')}
               safeMode={safeMode}
@@ -293,6 +363,7 @@ export default function App() {
 
           {currentView === 'laboratoire-attaques' && (
             <SecurityLabView
+              targetConfig={{ url: targetConfig.url, operatorId: targetConfig.operatorId }}
               onCommitFindingToApp={handleCommitLabFinding}
               onGoToReport={() => setCurrentView('rapport-and-remediation')}
               onGoToResults={() => setCurrentView('resultats-and-preuves')}
@@ -326,8 +397,6 @@ export default function App() {
 
           {currentView === 'laboratoire-wifi' && (
             <LaboratoireWifiView
-              onCommitFindingToApp={handleCommitLabFinding}
-              onGoToResults={() => setCurrentView('resultats-and-preuves')}
               onGoToCours={() => setCurrentView('cours-and-notions')}
             />
           )}

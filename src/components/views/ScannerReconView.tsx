@@ -29,7 +29,7 @@ export const ScannerReconView: React.FC<ScannerReconViewProps> = ({
   const [reconReport, setReconReport] = useState<any | null>(null);
   const [isReconRunning, setIsReconRunning] = useState<boolean>(false);
 
-  // ── Doctrine « zéro simulation » : les 4 cartes métriques du Quick Metrics
+  // ── Doctrine « zéro invention » : les 4 cartes métriques du Quick Metrics
   // Deck ci-dessous ne reflètent que des données RÉELLES — le rapport de
   // reconnaissance effectivement exécuté (sondes DNS/TCP/HTTP réelles de
   // /api/recon/advanced-suite) et la base SQLite locale.
@@ -60,7 +60,7 @@ export const ScannerReconView: React.FC<ScannerReconViewProps> = ({
       const data = await res.json();
       setReconReport(data);
     } catch (err: any) {
-      // Doctrine "zéro simulation" : aucune donnée inventée en cas d'échec.
+      // Doctrine "zéro invention" : aucune donnée inventée en cas d'échec.
       // L'ancien catch injectait un faux rapport (IP 93.184.216.34, ports OPEN
       // fictifs, bannière serveur inventée) — interdit pour un outil défensif.
       setReconReport({
@@ -301,11 +301,11 @@ export const ScannerReconView: React.FC<ScannerReconViewProps> = ({
               <div className="flex items-center gap-2">
                 <strong className="text-white text-xs font-mono">LABORATOIRE D'ATTAQUE & SUITE DE RECONNAISSANCE</strong>
                 <span className="px-2 py-0.5 rounded bg-[#4d8eff]/20 text-[#4cd7f6] text-[10px] font-mono font-bold">
-                  SIMULATION DÉFENSIVE
+                  SONDES RÉELLES — ATTESTATION
                 </span>
               </div>
               <p className="text-[11px] text-[#8c909f] mt-0.5">
-                Testez en bac à sable sécurisé les 8 vecteurs d'attaque majeurs (SQLi, XSS, SSRF, IDOR, JWT) et lancez une reconnaissance automatisée.
+                Exécutez les 8 vecteurs d'attaque réels (SQLi, XSS, SSRF, IDOR, JWT) contre votre cible autorisée et lancez une reconnaissance automatisée.
               </p>
             </div>
           </div>

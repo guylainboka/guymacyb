@@ -9,7 +9,7 @@
 //  Sur Windows : les scripts bash sont invoqués via `wsl.exe -d <distro> -- bash <script>`,
 //    ce qui lance nmap, aircrack-ng, nikto, etc. dans un vrai environnement Linux.
 //  Sur Linux (dev/sandbox) : exécution directe (équivalent natif).
-//  Aucune simulation : si un outil ou le hardware manque, un message honnête est retourné.
+//  Aucune donnée fabriquée : si un outil ou le hardware manque, un message honnête est retourné.
 //
 // Toutes les fonctions renvoient du JSON déjà parsé (objet). En cas d'erreur,
 // elles renvoient `{ error: string }` au lieu de throw — le caller peut renvoyer

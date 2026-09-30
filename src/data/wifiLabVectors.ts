@@ -1,17 +1,17 @@
 import { WifiLabVector } from '../types';
 
 /**
- * WIFI_LAB_VECTORS — Catalogue de vecteurs d'attaques WiFi pour le laboratoire
- * de simulation défensive (sandbox Guyma Cyb). Chaque vecteur documente :
+ * WIFI_LAB_VECTORS — Catalogue de fiches techniques WiFi (contenu de cours)
+ * du Laboratoire WiFi Guyma Cyb. Chaque fiche documente :
  *   - un scénario d'attaque réaliste (en français),
- *   - une sonde de test NON DESTRUCTIVE (safe payload),
- *   - les comportements attendus (vulnérable vs remédié),
+ *   - le comportement vulnérable vs le comportement durci,
  *   - les contrôles défensifs à mettre en œuvre,
  *   - un exemple de configuration hostapd/wpa_supplicant (vulnérable vs fixé).
  *
- * Les attaques décrites sont strictement pédagogiques : aucune n'est exécutée
- * sur un réseau réel. La simulation renvoie le comportement théorique observé
- * sur un environnement de laboratoire isolé.
+ * Ces fiches alimentent l'UI pédagogique. Les procédures RÉELLES passent par
+ * les outils WiFi backend (/api/wifi/* — aircrack-ng, reaver, iw via WSL) :
+ * sans matériel radio autorisé, ils renvoient des erreurs honnêtes — aucune
+ * donnée WiFi n'est fabriquée par l'application.
  */
 export const WIFI_LAB_VECTORS: WifiLabVector[] = [
   // ============================================================
@@ -96,7 +96,7 @@ sae_require_mac=1`,
     attackScenario:
       'Étapes : (1) sniffer le SSID/BSSID/canal de l\'AP légitime, (2) configurer hostapd avec le même SSID sur un canal adjacent (ou même canal avec un BSSID proche), (3) amplifier le signal (antenne directionnelle), (4) forcer la déconnexion des clients légitimes (deauth flood), (5) déployer dnsmasq + nginx + portail captif. Le client se reconnecte au faux AP et est redirigé vers `login.evil-twin.local`.',
     safeTestPayload:
-      'hostapd -B evil-twin.conf  # (sandbox only — sonde bénigne en lab isolé)',
+      'hostapd -B evil-twin.conf  # banc de test isolé autorisé — jamais sur un réseau tiers',
     vulnerableResponseSample: `Client association log (wlan0mon) — evil twin AP
 [2025-09-25T12:00:05Z] Probe request from AA:BB:CC:11:22:33 for "Company-WiFi"
 [2025-09-25T12:00:05Z] Probe response (evil-twin-BSSID) — signal -45 dBm (vs -68 dBm legit AP)

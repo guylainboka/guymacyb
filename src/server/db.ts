@@ -132,7 +132,7 @@ function initTables(db: Database) {
     );
   `);
 
-  // Doctrine « zéro simulation » : on ne peuple PLUS la base avec des cibles
+  // Doctrine « zéro invention » : on ne peuple PLUS la base avec des cibles
   // fictives au premier lancement. L'utilisateur démarre avec une base vide
   // et un dashboard honnête (« Aucune donnée disponible »). Les cibles
   // historiques n'apparaissent qu'après un vrai scan.
