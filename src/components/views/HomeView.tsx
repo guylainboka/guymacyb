@@ -38,6 +38,19 @@ interface CoreStatus {
   error?: string;
 }
 
+// Doit correspondre à DistroInstallStatus dans src/server/wsl.ts (API
+// /api/core/install-distro/status) : état du job d'installation de la distro.
+interface DistroJob {
+  running: boolean;
+  done: boolean;
+  success: boolean;
+  error: string;
+  log: string[];
+  distroName: string;
+  startedAt: number | null;
+  finishedAt: number | null;
+}
+
 const SERVICES: { id: ModuleView; label: string; icon: string; desc: string; req: 'none' | 'tools' | 'wsl' | 'wifi' }[] = [
   { id: 'scanner-and-recon', label: 'Scanner & Recon', icon: 'radar', desc: 'Reconnaissance cible, ports, DNS, TLS', req: 'none' },
   { id: 'analyse-web', label: 'Analyse Web', icon: 'language', desc: 'En-têtes de sécurité, endpoints, findings', req: 'none' },
@@ -73,9 +86,18 @@ export const HomeView: React.FC<HomeViewProps> = ({ onSelectView }) => {
   const [sys, setSys] = useState<SystemStatus | null>(null);
   const [core, setCore] = useState<CoreStatus | null>(null);
   const [loading, setLoading] = useState<boolean>(true);
-  const [busy, setBusy] = useState<'' | 'install' | 'refresh'>('');
+  const [busy, setBusy] = useState<'' | 'install' | 'refresh' | 'distro'>('');
   const [actionOutput, setActionOutput] = useState<string>('');
   const [actionError, setActionError] = useState<string>('');
+  const [distroJob, setDistroJob] = useState<DistroJob | null>(null);
+  const mountedRef = React.useRef<boolean>(true);
+
+  useEffect(() => {
+    mountedRef.current = true;
+    return () => {
+      mountedRef.current = false;
+    };
+  }, []);
 
   const load = useCallback(async () => {
     setLoading(true);
@@ -145,9 +167,79 @@ export const HomeView: React.FC<HomeViewProps> = ({ onSelectView }) => {
     }
   };
 
+  // État « WSL installé mais AUCUN distro Linux » : le cas signalé par
+  // l'opérateur (wsl.exe répond, `wsl -l -v` vide) — bouton dédié requis.
   const toolsAvail = core?.tools?.available?.length ?? 0;
   const toolsTotal = toolsAvail + (core?.tools?.missing?.length ?? 0);
   const wslOk = core?.wsl?.available ?? false;
+  const noDistro = Boolean(
+    core?.isWindows && !wslOk && core?.wsl?.installed && (core?.wsl?.distros?.length ?? 0) === 0
+  );
+
+  const pollDistroStatus = async (): Promise<DistroJob | null> => {
+    try {
+      const r = await fetch('/api/core/install-distro/status');
+      const data = await r.json();
+      if (mountedRef.current) setDistroJob(data);
+      return data as DistroJob;
+    } catch {
+      return null;
+    }
+  };
+
+  const installDistro = async () => {
+    setBusy('distro');
+    setActionError('');
+    setActionOutput('');
+    try {
+      const r = await fetch('/api/core/install-distro', { method: 'POST' });
+      const data = await r.json();
+      if (!r.ok) {
+        setActionError(data?.error || 'Démarrage de l\'installation impossible');
+        setBusy('');
+        return;
+      }
+      // Polling du journal jusqu'à la fin du job (téléchargement + enregistrement).
+      // Le boucle continue même si le composant est démonté/remonté : le job
+      // vit côté serveur ; au remontage, useEffect relance le polling si besoin.
+      for (;;) {
+        await new Promise((s) => setTimeout(s, 2500));
+        const st = await pollDistroStatus();
+        if (!mountedRef.current) return;
+        if (st?.done) break;
+      }
+      await load();
+    } catch (e: any) {
+      if (mountedRef.current) setActionError(e?.message || 'API injoignable');
+    } finally {
+      if (mountedRef.current) setBusy('');
+    }
+  };
+
+  // Si un job est déjà en cours (page rafraîchie pendant l'installation),
+  // on reprend le polling au montage.
+  useEffect(() => {
+    let cancelled = false;
+    (async () => {
+      const st = await pollDistroStatus();
+      if (cancelled || !st?.running) return;
+      setBusy('distro');
+      for (;;) {
+        await new Promise((s) => setTimeout(s, 2500));
+        const cur = await pollDistroStatus();
+        if (cancelled || !mountedRef.current) return;
+        if (cur?.done) break;
+      }
+      if (!cancelled && mountedRef.current) {
+        setBusy('');
+        void load();
+      }
+    })();
+    return () => {
+      cancelled = true;
+    };
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, []);
 
   const availabilityOf = (req: string): { ok: boolean; label: string } => {
     if (req === 'none') return { ok: true, label: 'Prêt' };
@@ -198,8 +290,41 @@ export const HomeView: React.FC<HomeViewProps> = ({ onSelectView }) => {
           </div>
         </div>
 
-        {/* Raison honnête si WSL indisponible */}
-        {core?.isWindows && !wslOk && core?.wsl?.reason && (
+        {/* WSL installé mais AUCUN distro : panneau de correction en un clic */}
+        {noDistro && (
+          <div className="mt-4 rounded-lg border border-amber-500/30 bg-amber-500/10 p-4">
+            <div className="flex items-start gap-3">
+              <span className="material-symbols-outlined text-amber-400">dns</span>
+              <div className="flex-1 text-sm text-amber-200">
+                <strong>WSL est installé mais aucune distribution Linux n'est enregistrée.</strong>
+                <div className="mt-1 text-xs text-amber-300/80">
+                  C'est pour cela que les outils ne peuvent pas s'installer et que les terminaux restent inactifs.
+                  Cliquez ci-dessous : le logiciel télécharge et enregistre Ubuntu tout seul (5 à 15 min selon la
+                  connexion), sans aucune commande à taper. Si Windows demande une confirmation (UAC), acceptez-la.
+                </div>
+                <button
+                  onClick={installDistro}
+                  disabled={busy !== ''}
+                  className="mt-3 flex min-h-[44px] items-center gap-2 rounded-lg border border-amber-400/40 bg-amber-500/20 px-4 py-2 text-sm font-semibold text-amber-100 transition hover:bg-amber-500/30 disabled:opacity-50"
+                >
+                  <span className="material-symbols-outlined text-base">download</span>
+                  {busy === 'distro' ? 'Installation d\'Ubuntu en cours…' : 'Installer Ubuntu maintenant (un clic)'}
+                </button>
+              </div>
+            </div>
+            {distroJob && (distroJob.log.length > 0 || distroJob.running) && (
+              <pre className="mt-3 max-h-56 overflow-y-auto whitespace-pre-wrap rounded-lg border border-amber-500/20 bg-[#0a0d13] p-3 text-xs text-amber-100/90 scrollbar-thin">
+                {distroJob.log.join('\n')}
+              </pre>
+            )}
+            {distroJob?.done && distroJob.error && (
+              <div className="mt-2 text-xs text-red-300">✗ {distroJob.error}</div>
+            )}
+          </div>
+        )}
+
+        {/* Raison honnête si WSL indisponible (autres cas) */}
+        {core?.isWindows && !wslOk && core?.wsl?.reason && !noDistro && (
           <div className="mt-4 flex items-start gap-3 rounded-lg border border-amber-500/30 bg-amber-500/10 p-3">
             <span className="material-symbols-outlined text-amber-400">warning</span>
             <div className="text-sm text-amber-200">
@@ -245,9 +370,13 @@ export const HomeView: React.FC<HomeViewProps> = ({ onSelectView }) => {
           </button>
           <button
             onClick={installTools}
-            disabled={busy !== ''}
-            className="flex min-h-[44px] items-center gap-2 rounded-lg border border-[#2c3245] bg-[#1a1f2b] px-4 py-2 text-sm font-medium text-white transition hover:border-[#4cd7f6]/50 hover:bg-[#1e2433] disabled:opacity-50"
-            title="Installe nmap, nikto, aircrack-ng, hashcat… dans le distro WSL détecté, puis vérifie chaque outil et consigne le résultat dans tools-registry"
+            disabled={busy !== '' || (core?.isWindows && !wslOk)}
+            className="flex min-h-[44px] items-center gap-2 rounded-lg border border-[#2c3245] bg-[#1a1f2b] px-4 py-2 text-sm font-medium text-white transition hover:border-[#4cd7f6]/50 hover:bg-[#1e2433] disabled:cursor-not-allowed disabled:opacity-50"
+            title={
+              core?.isWindows && !wslOk
+                ? 'Nécessite une distribution WSL opérationnelle — installez d\'abord Ubuntu (bouton dédié ci-dessus)'
+                : 'Installe nmap, nikto, aircrack-ng, hashcat… dans le distro WSL détecté, puis vérifie chaque outil et consigne le résultat dans tools-registry'
+            }
           >
             <span className="material-symbols-outlined text-base">download</span>
             {busy === 'install' ? 'Installation…' : `Installer les outils Linux (${toolsTotal - toolsAvail} manquants)`}

@@ -466,11 +466,14 @@ function installWslElevated(progress) {
     if (!IS_WIN) {
       return resolve({ exitCode: 0, output: 'Mode Linux natif — aucune installation WSL requise', rebootRequired: false });
     }
-    // Installe WSL + la distro par défaut en une commande. L'ancien code passait
-    // `--no-distribution` ET `-d <distro>` — combinaison contradictoire rejetée
-    // par wsl.exe. La distro est nécessaire à l'étape 3 (outils apt).
-    const psScript = `Start-Process wsl.exe -ArgumentList '--install','-d','${WSL_DISTRO}' -Verb RunAs -Wait -PassThru | Select-Object -ExpandProperty ExitCode`;
-    progress('$ wsl --install -d ' + WSL_DISTRO + '  (élévation UAC)');
+    // FIX OOBE : on passe `--no-launch` (doc Microsoft) pour installer SANS lancer
+    // la distribution. Sans ce flag, `wsl --install -d Ubuntu` démarre l'OOBE
+    // interactif (création utilisateur) qui ATTEND une saisie clavier dans une
+    // console invisible → le wizard semble figé. L'initialisation non-interactive
+    // (root + /etc/wsl.conf) est faite juste après, exactement comme le job
+    // HTTP /api/core/install-distro du serveur.
+    const psScript = `Start-Process wsl.exe -ArgumentList '--install','--no-launch','-d','${WSL_DISTRO}' -Verb RunAs -Wait -PassThru | Select-Object -ExpandProperty ExitCode`;
+    progress('$ wsl --install --no-launch -d ' + WSL_DISTRO + '  (élévation UAC)');
     const child = spawn('powershell.exe', ['-NoProfile', '-Command', psScript], {
       stdio: ['ignore', 'pipe', 'pipe'],
       windowsHide: true,
@@ -478,10 +481,40 @@ function installWslElevated(progress) {
     let out = '';
     child.stdout.on('data', (d) => { out += d.toString(); });
     child.stderr.on('data', (d) => { out += d.toString(); progress(d.toString().trim()); });
-    child.on('close', (code) => {
+    child.on('close', async (code) => {
       // Vérifie si un redémarrage est nécessaire (WSL2 kernel install requiert reboot)
       const rebootRequired = /restart|reboot|redémarr/i.test(out);
       progress(rebootRequired ? '⚠ Redémarrage requis pour activer WSL.' : '✓ Commande wsl --install terminée.');
+      // Initialisation non-interactive de la distro (si elle vient d'être créée)
+      if (!rebootRequired && code === 0) {
+        progress('Attente de l\'enregistrement de la distribution…');
+        let registered = false;
+        for (let i = 0; i < 30; i++) {
+          await new Promise((r) => setTimeout(r, 5000));
+          const q = await runCmd('wsl.exe', ['--list', '--quiet'], { timeoutMs: 20000 });
+          const names = q.stdout.split(/\r?\n/).map((l) => l.trim())
+            .filter((l) => /^[A-Za-z0-9][A-Za-z0-9._-]*$/.test(l));
+          if (names.length > 0) {
+            const chosen = names.find((n) => /^ubuntu/i.test(n)) || names[0];
+            progress('Distribution enregistrée : ' + chosen + ' — premier démarrage (root, sans OOBE)…');
+            const init = await runCmd('wsl.exe', ['-d', chosen, '-u', 'root', '--', 'echo', 'gcyb-init-ok'], { timeoutMs: 300000 });
+            if (init.exitCode === 0 && init.stdout.includes('gcyb-init-ok')) {
+              await runCmd('wsl.exe', ['-d', chosen, '-u', 'root', '--', 'bash', '-c',
+                `printf '[user]\\ndefault=root\\n' > /etc/wsl.conf`], { timeoutMs: 30000 });
+              await runCmd('wsl.exe', ['--terminate', chosen], { timeoutMs: 30000 });
+              progress('✓ Distribution initialisée (compte root par défaut, zéro prompt sudo).');
+            } else {
+              progress('⚠ La distribution est enregistrée mais le premier démarrage a échoué — relancez le wizard.');
+            }
+            registered = true;
+            break;
+          }
+          if (i % 6 === 5) progress('… toujours en attente d\'enregistrement (' + ((i + 1) * 5) + ' s)');
+        }
+        if (!registered) {
+          progress('⚠ La distribution ne s\'est pas enregistrée en 2 min 30 — vérifiez la connexion puis relancez.');
+        }
+      }
       resolve({ exitCode: code ?? 0, output: out, rebootRequired });
     });
     child.on('error', (e) => {

@@ -35,7 +35,7 @@ import { WIFI_LAB_VECTORS } from './src/data/wifiLabVectors';
 import { COURSE_NOTIONS } from './src/data/courseNotions';
 import { getPackagingInfo } from './src/server/packaging';
 import * as ws from './src/server/windowsSystem';
-import { invalidateWslCache } from './src/server/wsl';
+import { invalidateWslCache, startDistroInstall, getDistroInstallStatus } from './src/server/wsl';
 import * as tb from './src/server/toolbridge';
 
 // PORT/HOST configurables : Electron (electron-main.cjs) injecte PORT=3000 et
@@ -898,6 +898,29 @@ async function startServer() {
       invalidateWslCache();
       const status = await tb.getCoreStatus();
       res.json(status);
+    } catch (err: any) {
+      res.status(500).json({ error: err.message });
+    }
+  });
+
+  // Installation en un clic de la DISTRIBUTION Ubuntu — traite l'état
+  // « WSL installé mais aucune distro » (wsl.exe répond, `wsl -l -v` vide).
+  // Le téléchargement peut durer 5-15 min : le POST démarre le job asynchrone
+  // et rend la main immédiatement ; le suivi se fait via GET .../status.
+  app.post('/api/core/install-distro', async (_req, res) => {
+    try {
+      const r = startDistroInstall();
+      if (!r.started) return res.status(409).json({ error: r.message });
+      res.json({ started: true, message: r.message });
+    } catch (err: any) {
+      res.status(500).json({ error: err.message });
+    }
+  });
+
+  // Suivi du job d'installation de la distribution : état + journal en direct.
+  app.get('/api/core/install-distro/status', async (_req, res) => {
+    try {
+      res.json(getDistroInstallStatus());
     } catch (err: any) {
       res.status(500).json({ error: err.message });
     }

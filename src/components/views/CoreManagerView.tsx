@@ -9,7 +9,7 @@ interface WslDistro {
 
 // NOTE: shape must match `/api/core/status` returned by `getCoreStatus()` in
 // `src/server/toolbridge.ts`. The API returns:
-//   platform, isWindows, wsl{available,distros,defaultDistro},
+//   platform, isWindows, wsl{available,installed,reason,distros,defaultDistro},
 //   tools{available,missing}, python, node, memoryMb
 // There is NO `bridge`, `memory.total/free`, `tools.installed/total`, or
 // `timestamp` field — these are derived locally from the real API fields.
@@ -19,9 +19,22 @@ interface CoreStatus {
   node: string;
   memoryMb?: number;
   python?: string | null;
-  wsl?: { distros: WslDistro[]; defaultDistro: string | null; available: boolean } | null;
+  wsl?: { distros: WslDistro[]; defaultDistro: string | null; available: boolean; installed?: boolean; reason?: string } | null;
   tools?: { available: string[]; missing: string[] };
   error?: string;
+}
+
+// Doit correspondre à DistroInstallStatus dans src/server/wsl.ts
+// (API /api/core/install-distro/status).
+interface DistroJob {
+  running: boolean;
+  done: boolean;
+  success: boolean;
+  error: string;
+  log: string[];
+  distroName: string;
+  startedAt: number | null;
+  finishedAt: number | null;
 }
 
 // NOTE: shape must match `/api/core/install-tools` returned by
@@ -108,6 +121,79 @@ export const CoreManagerView: React.FC = () => {
       setError(e?.message || 'Impossible d\'ouvrir l\'assistant de configuration');
     }
   };
+
+  // État « WSL installé mais AUCUN distro » : installation d'Ubuntu en un clic
+  // via l'API HTTP (marche aussi hors Electron), avec journal en direct.
+  const [distroJob, setDistroJob] = useState<DistroJob | null>(null);
+  const [distroBusy, setDistroBusy] = useState<boolean>(false);
+  const mountedRef = React.useRef<boolean>(true);
+
+  useEffect(() => {
+    mountedRef.current = true;
+    return () => {
+      mountedRef.current = false;
+    };
+  }, []);
+
+  const pollDistroStatus = async (): Promise<DistroJob | null> => {
+    try {
+      const r = await fetch('/api/core/install-distro/status');
+      const data = await r.json();
+      if (mountedRef.current) setDistroJob(data);
+      return data as DistroJob;
+    } catch {
+      return null;
+    }
+  };
+
+  const handleInstallDistro = async () => {
+    setDistroBusy(true);
+    setError(null);
+    try {
+      const r = await fetch('/api/core/install-distro', { method: 'POST' });
+      const data = await r.json();
+      if (!r.ok) {
+        setError(data?.error || 'Démarrage de l\'installation impossible');
+        setDistroBusy(false);
+        return;
+      }
+      for (;;) {
+        await new Promise((s) => setTimeout(s, 2500));
+        const st = await pollDistroStatus();
+        if (!mountedRef.current) return;
+        if (st?.done) break;
+      }
+      if (mountedRef.current) await refresh();
+    } catch (e: any) {
+      if (mountedRef.current) setError(e?.message || 'API injoignable');
+    } finally {
+      if (mountedRef.current) setDistroBusy(false);
+    }
+  };
+
+  // Reprend le polling si un job tourne déjà (page rafraîchie pendant l'install).
+  useEffect(() => {
+    let cancelled = false;
+    (async () => {
+      const st = await pollDistroStatus();
+      if (cancelled || !st?.running) return;
+      setDistroBusy(true);
+      for (;;) {
+        await new Promise((s) => setTimeout(s, 2500));
+        const cur = await pollDistroStatus();
+        if (cancelled || !mountedRef.current) return;
+        if (cur?.done) break;
+      }
+      if (!cancelled && mountedRef.current) {
+        setDistroBusy(false);
+        void refresh();
+      }
+    })();
+    return () => {
+      cancelled = true;
+    };
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, []);
 
   // Rafraîchit automatiquement le statut quand la fenêtre principale regagne
   // le focus (l'utilisateur a peut-être installé WSL/outils via le wizard).
@@ -296,20 +382,44 @@ export const CoreManagerView: React.FC = () => {
                     </div>
                   ) : (
                     <div className="space-y-3">
-                      <div className="px-3 py-2 rounded bg-amber-500/10 border border-amber-500/30 text-amber-400 text-xs font-mono">
-                        WSL non détecté. Installation conseillée pour activer les modules WiFi / Arsenal / Terminal avancé.
-                      </div>
-                      <button
-                        onClick={openSetupWizard}
-                        className="px-3 py-1.5 text-xs rounded bg-[#4d8eff]/15 border border-[#4d8eff]/40 hover:bg-[#4d8eff]/25 text-[#4d8eff] flex items-center gap-1.5 transition-colors font-medium"
-                        type="button"
-                      >
-                        <span className="material-symbols-outlined text-[16px]">download</span>
-                        Installer WSL (assistant UAC)
-                      </button>
-                      <div className="text-[11px] text-[#8c909f] font-mono">
-                        Ou manuellement : <code>wsl --install</code> dans PowerShell (admin).
-                      </div>
+                      {wsl?.installed && (wsl.distros?.length ?? 0) === 0 ? (
+                        <>
+                          <div className="px-3 py-2 rounded bg-amber-500/10 border border-amber-500/30 text-amber-400 text-xs font-mono">
+                            WSL est installé mais AUCUN distro Linux n'est enregistré — c'est pourquoi les outils et terminaux sont inopérants.
+                          </div>
+                          <button
+                            onClick={handleInstallDistro}
+                            disabled={distroBusy}
+                            className="px-3 py-1.5 text-xs rounded bg-amber-500/15 border border-amber-400/40 hover:bg-amber-500/25 text-amber-300 flex items-center gap-1.5 transition-colors font-medium disabled:opacity-50"
+                            type="button"
+                          >
+                            <span className="material-symbols-outlined text-[16px]">download</span>
+                            {distroBusy ? 'Installation d\'Ubuntu en cours…' : 'Installer la distribution Ubuntu (un clic)'}
+                          </button>
+                          {distroJob && distroJob.log.length > 0 && (
+                            <pre className="max-h-48 overflow-y-auto whitespace-pre-wrap rounded border border-[#24314c] bg-[#0a0e18] p-2 text-[10px] font-mono text-amber-100/80 scrollbar-thin">
+                              {distroJob.log.join('\n')}
+                            </pre>
+                          )}
+                        </>
+                      ) : (
+                        <>
+                          <div className="px-3 py-2 rounded bg-amber-500/10 border border-amber-500/30 text-amber-400 text-xs font-mono">
+                            {wsl?.reason || 'WSL non détecté. Installation conseillée pour activer les modules WiFi / Arsenal / Terminal avancé.'}
+                          </div>
+                          <button
+                            onClick={openSetupWizard}
+                            className="px-3 py-1.5 text-xs rounded bg-[#4d8eff]/15 border border-[#4d8eff]/40 hover:bg-[#4d8eff]/25 text-[#4d8eff] flex items-center gap-1.5 transition-colors font-medium"
+                            type="button"
+                          >
+                            <span className="material-symbols-outlined text-[16px]">download</span>
+                            Installer WSL (assistant UAC)
+                          </button>
+                          <div className="text-[11px] text-[#8c909f] font-mono">
+                            Ou manuellement : <code>wsl --install</code> dans PowerShell (admin).
+                          </div>
+                        </>
+                      )}
                     </div>
                   )
                 ) : (
