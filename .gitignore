@@ -49,3 +49,6 @@ shadow_core.db
 # Autres artefacts sandbox
 download/
 desktop/signing/*.crt
+
+# Dossier de skills IA (outils de développement locaux — jamais livrés dans le logiciel)
+skills/

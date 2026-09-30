@@ -6,7 +6,7 @@
 #     subnet : CIDR or bare /24 prefix. Default: auto-detect from local IP.
 #              Accepts "192.168.1.0/24", "192.168.1" or "192.168.1.1/24".
 #
-# Behaviour (all real — no simulation):
+# Behaviour (all real — nothing invented):
 #   1. Resolve local /24 (auto via `ip -4 addr` or a UDP-connect probe fallback).
 #   2. TCP-connect probe port 554 on each host of the /24 (rootless, no SYN).
 #   3. For each host with port 554 open, send an RTSP OPTIONS / DESCRIBE

@@ -22,10 +22,13 @@ import {
 } from './src/server/securityLab';
 import { runActiveTestSuite } from './src/server/activeTests';
 import { retestFinding } from './src/server/retest';
+import { computeCvss31 } from './src/server/cvss31';
 import {
   validateAuthorization,
   recordAuthorization,
   AUTHORIZATION_STATEMENTS,
+  TestAuthorization,
+  AuthorizationLevel,
 } from './src/server/authorization';
 import { LAB_ATTACK_VECTORS } from './src/data/labAttackVectors';
 import { WIFI_LAB_VECTORS } from './src/data/wifiLabVectors';
@@ -129,10 +132,78 @@ async function startServer() {
     }
   });
 
-  // Laboratoire RÉEL — catalogue des 8 vecteurs (fiches techniques + sondes)
+  // Laboratoire RÉEL — catalogue des 8 vecteurs (fiches techniques + sondes).
+  // Le score CVSS est CALCULÉ vectoriellement (v3.1) côté serveur et renvoyé
+  // avec le vecteur — le frontend n'invente jamais un score.
   app.get('/api/lab/vectors', (_req, res) => {
-    res.json(LAB_ATTACK_VECTORS);
+    res.json(
+      LAB_ATTACK_VECTORS.map((v) => {
+        try {
+          const c = computeCvss31(v.cvssVector ?? '');
+          return { ...v, cvssScore: c.baseScore, cvssSeverity: c.severity, cvssVectorNormalized: c.vector };
+        } catch {
+          return v; // pas de vecteur → renvoyé tel quel (repli documenté)
+        }
+      })
+    );
   });
+
+  // Cartographie des niveaux d'attestation exigés par outil WiFi réel
+  // (source de vérité unique consommée par les vues LaboratoireWifiView et
+  // WifiReseauView — le frontend ne duplique pas la décision).
+  const WIFI_AUTH_REQUIREMENTS: Record<string, AuthorizationLevel> = {
+    '/api/wifi/monitor-mode': 'ACTIVE',
+    '/api/wifi/handshake-capture': 'ACTIVE',
+    '/api/wifi/crack-handshake': 'DESTRUCTIVE',
+    '/api/wifi/wps-attack': 'DESTRUCTIVE',
+    '/api/wifi/evil-twin': 'DESTRUCTIVE',
+    '/api/wifi/mac-changer': 'ACTIVE',
+  };
+  app.get('/api/wifi/auth-requirements', (_req, res) => {
+    res.json({ requirements: WIFI_AUTH_REQUIREMENTS, statements: AUTHORIZATION_STATEMENTS });
+  });
+
+  /**
+   * Garde-fou légal des outils WiFi RÉELS : exige une attestation du niveau
+   * requis, la journalise, puis trace l'action dans audit_logs. Renvoie null
+   * (et a déjà répondu 403) si l'attestation est absente/incorrecte.
+   */
+  const requireWifiAttestation = async (
+    req: any,
+    res: any,
+    endpoint: string,
+    level: AuthorizationLevel,
+    targetLabel: string
+  ): Promise<TestAuthorization | null> => {
+    const check = validateAuthorization(req.body, level, targetLabel);
+    if (!check.ok) {
+      res.status(403).json({
+        error: check.reason,
+        attestationRequired: true,
+        requiredLevel: level,
+        endpoint,
+        statement: AUTHORIZATION_STATEMENTS[level],
+      });
+      return null;
+    }
+    await recordAuthorization(check.authorization);
+    try {
+      const db = await getDatabase();
+      db.run(
+        `INSERT INTO audit_logs (id, timestamp, tag, text, operator_id)
+         VALUES (?, datetime('now'), 'WIFI_REAL_ACTION', ?, ?)`,
+        [
+          `log-wifi-${Date.now()}-${Math.floor(Math.random() * 1e6)}`,
+          `Outil WiFi réel ${endpoint} déclenché contre « ${check.authorization.targetUrl} » (attestation ${level}).`,
+          check.authorization.operatorId,
+        ]
+      );
+      saveDatabaseToDisk(db);
+    } catch (err) {
+      console.error('[WiFi] Échec de journalisation de l\'action WiFi réelle:', err);
+    }
+    return check.authorization;
+  };
 
   // Déclaration légale officielle à afficher dans les modales d'autorisation
   app.get('/api/authorization/statements', (_req, res) => {
@@ -176,6 +247,79 @@ async function startServer() {
     } catch (err: any) {
       console.error('[GuymaCyb Lab] Erreur de rapport réel:', err);
       res.status(500).json({ error: err.message || 'Erreur de génération du rapport réel' });
+    }
+  });
+
+  // Laboratoire RÉEL — historique des scans du laboratoire (SCAN-LABREAL-*)
+  // et de leurs findings, lus depuis SQLite. Endoint référencé par le filtre
+  // de /api/findings (les findings du lab sont exclus du dashboard général
+  // et exposés ICI uniquement).
+  app.get('/api/lab/history', async (_req, res) => {
+    try {
+      const db = await getDatabase();
+      const scansResult = db.exec(`
+        SELECT s.id, s.url, s.scan_type, s.cvss_score, s.risk_level, s.duration_ms,
+               s.endpoints_count, s.created_at,
+               (SELECT COUNT(*) FROM findings f WHERE f.scan_id = s.id) AS findings_count
+        FROM scans s
+        WHERE s.id LIKE 'SCAN-LABREAL-%' OR s.scan_type IN ('LAB_REAL_PROBE', 'LAB_REAL_SUITE')
+        ORDER BY s.created_at DESC
+        LIMIT 50
+      `);
+      const scans = (scansResult[0]?.values || []).map((row) => {
+        const cols = scansResult[0].columns;
+        const obj: Record<string, any> = {};
+        cols.forEach((c, i) => (obj[c] = row[i]));
+        return obj;
+      });
+
+      const findingsResult = db.exec(`
+        SELECT id, scan_id, target_url, title, severity, cvss, confidence, status,
+               affected_component, category, cwe, description, evidence_request,
+               evidence_response, impact, remediation_title, remediation_steps_json,
+               signature, cvss_vector, created_at
+        FROM findings
+        WHERE scan_id LIKE 'SCAN-LABREAL-%'
+        ORDER BY created_at DESC
+        LIMIT 200
+      `);
+      const findings = (findingsResult[0]?.values || []).map((row, rowIdx) => {
+        const cols = findingsResult[0].columns;
+        const obj: Record<string, any> = {};
+        cols.forEach((c, i) => (obj[c] = row[i]));
+        let steps: string[] = [];
+        try {
+          steps = JSON.parse(obj.remediation_steps_json || '[]');
+        } catch {
+          steps = [];
+        }
+        return {
+          id: obj.id,
+          scanId: obj.scan_id,
+          targetUrl: obj.target_url,
+          title: obj.title,
+          severity: obj.severity,
+          cvss: Number(obj.cvss),
+          cvssVector: obj.cvss_vector ?? null,
+          confidence: Number(obj.confidence),
+          status: obj.status,
+          affectedComponent: obj.affected_component,
+          category: obj.category,
+          cwe: obj.cwe,
+          description: obj.description,
+          evidence: { request: obj.evidence_request, response: obj.evidence_response },
+          impact: obj.impact,
+          remediationTitle: obj.remediation_title,
+          remediationSteps: steps,
+          signature: obj.signature,
+          createdAt: obj.created_at,
+          sqliteRow: rowIdx + 1,
+        };
+      });
+
+      res.json({ scans, findings, totalScans: scans.length, totalFindings: findings.length });
+    } catch (err: any) {
+      res.status(500).json({ error: err.message });
     }
   });
 
@@ -301,7 +445,7 @@ async function startServer() {
       let query = `
         SELECT id, scan_id, target_url, title, severity, cvss, confidence, status,
                affected_component, category, cwe, description, evidence_request,
-               evidence_response, impact, remediation_title, remediation_steps_json, signature, created_at
+               evidence_response, impact, remediation_title, remediation_steps_json, signature, cvss_vector, created_at
         FROM findings
       `;
       const params: any[] = [];
@@ -311,7 +455,7 @@ async function startServer() {
       // et target_url 'shadowscan-lab.internal') pour que le dashboard ne montre
       // QUE les findings issus de vrais scans de cibles réelles. Les findings du
       // lab sont accessibles via /api/lab/history (endpoint dédié).
-      conditions.push(`(scan_id NOT LIKE 'lab-%' AND scan_id NOT LIKE 'SCAN-LAB-%' AND scan_id NOT LIKE 'SCAN-WIFI-LAB-%')`);
+      conditions.push(`(scan_id NOT LIKE 'lab-%' AND scan_id NOT LIKE 'SCAN-LAB-%' AND scan_id NOT LIKE 'SCAN-LABREAL-%' AND scan_id NOT LIKE 'SCAN-WIFI-LAB-%')`);
       conditions.push(`(target_url NOT LIKE '%shadowscan-lab.internal%')`);
       if (urlFilter) {
         conditions.push(`target_url LIKE ?`);
@@ -343,6 +487,7 @@ async function startServer() {
           title: obj.title,
           severity: obj.severity,
           cvss: Number(obj.cvss),
+          cvssVector: obj.cvss_vector ?? null,
           confidence: Number(obj.confidence),
           status: obj.status,
           affectedComponent: obj.affected_component,
@@ -581,9 +726,19 @@ async function startServer() {
     }
   });
 
-  // WiFi Lab — catalogue des fiches techniques WiFi (contenu de cours)
+  // WiFi Lab — catalogue des fiches techniques WiFi (contenu de cours).
+  // Scores CVSS calculés vectoriellement (v3.1) côté serveur.
   app.get('/api/wifi/lab/vectors', (_req, res) => {
-    res.json(WIFI_LAB_VECTORS);
+    res.json(
+      WIFI_LAB_VECTORS.map((v) => {
+        try {
+          const c = computeCvss31(v.cvssVector ?? '');
+          return { ...v, cvssScore: c.baseScore, cvssSeverity: c.severity, cvssVectorNormalized: c.vector };
+        } catch {
+          return v;
+        }
+      })
+    );
   });
 
   // Les anciens endpoints de WiFi factice ont été retirés : le laboratoire
@@ -622,55 +777,84 @@ async function startServer() {
   //  API WiFi avancé (monitor mode, handshake, crack, WPS, MAC)
   // ============================================================
 
-  // Active le mode monitor sur une interface
+  // Active le mode monitor sur une interface — attestation ACTIVE requise
+  // (altère l'état radio de la machine de l'opérateur, prérequis d'attaques).
   app.post('/api/wifi/monitor-mode', async (req, res) => {
     try {
       const { interface: iface } = req.body;
       if (!iface) return res.status(400).json({ error: 'interface requise' });
+      const auth = await requireWifiAttestation(req, res, '/api/wifi/monitor-mode', 'ACTIVE', iface);
+      if (!auth) return;
       res.json(await tb.toolWifiMonitorMode(iface));
     } catch (err: any) {
       res.status(500).json({ error: err.message });
     }
   });
 
-  // Capture d'un 4-way handshake
+  // Capture d'un 4-way handshake — attestation ACTIVE requise
+  // (écoute ciblée réelle sur un BSSID précis).
   app.post('/api/wifi/handshake-capture', async (req, res) => {
     try {
       const { bssid, channel, interface: iface, duration } = req.body;
       if (!bssid) return res.status(400).json({ error: 'bssid requis' });
+      const auth = await requireWifiAttestation(req, res, '/api/wifi/handshake-capture', 'ACTIVE', bssid);
+      if (!auth) return;
       res.json(await tb.toolWifiHandshakeCapture(bssid, channel || 6, iface || 'wlan0mon', duration || 30));
     } catch (err: any) {
       res.status(500).json({ error: err.message });
     }
   });
 
-  // Casser un handshake capturé
+  // Casser un handshake capturé — attestation DESTRUCTIVE requise
+  // (attaque par force brute contre des identifiants réels).
   app.post('/api/wifi/crack-handshake', async (req, res) => {
     try {
       const { capFile, wordlist } = req.body;
       if (!capFile) return res.status(400).json({ error: 'capFile requis' });
+      const auth = await requireWifiAttestation(req, res, '/api/wifi/crack-handshake', 'DESTRUCTIVE', capFile);
+      if (!auth) return;
       res.json(await tb.toolWifiCrackHandshake(capFile, wordlist));
     } catch (err: any) {
       res.status(500).json({ error: err.message });
     }
   });
 
-  // Attaque WPS (Pixie-Dust / PIN / brute)
+  // Attaque WPS (Pixie-Dust / PIN / brute) — attestation DESTRUCTIVE requise
+  // (attaque active contre le point d'accès cible).
   app.post('/api/wifi/wps-attack', async (req, res) => {
     try {
       const { bssid, interface: iface, mode, pin } = req.body;
       if (!bssid) return res.status(400).json({ error: 'bssid requis' });
+      const auth = await requireWifiAttestation(req, res, '/api/wifi/wps-attack', 'DESTRUCTIVE', bssid);
+      if (!auth) return;
       res.json(await tb.toolWifiWpsAttack(bssid, iface || 'wlan0mon', mode || 'pixie', pin));
     } catch (err: any) {
       res.status(500).json({ error: err.message });
     }
   });
 
-  // Changement d'adresse MAC
+  // Evil Twin réel (hostapd + dnsmasq) — attestation DESTRUCTIVE requise
+  // (usurpation d'identité radio : interception de trafic réel de clients).
+  app.post('/api/wifi/evil-twin', async (req, res) => {
+    try {
+      const { ssid, channel, interface: iface, duration } = req.body;
+      if (!ssid) return res.status(400).json({ error: 'ssid requis' });
+      const auth = await requireWifiAttestation(req, res, '/api/wifi/evil-twin', 'DESTRUCTIVE', ssid);
+      if (!auth) return;
+      res.json(await tb.toolWifiEvilTwin(ssid, channel || 6, iface || 'wlan0mon', duration || 60));
+    } catch (err: any) {
+      res.status(500).json({ error: err.message });
+    }
+  });
+
+  // Changement d'adresse MAC — attestation ACTIVE requise (altération de
+  // l'identité matérielle de l'interface de l'opérateur).
   app.post('/api/wifi/mac-changer', async (req, res) => {
     try {
       const { interface: iface, mac } = req.body;
       if (!iface) return res.status(400).json({ error: 'interface requise' });
+      const auth = await requireWifiAttestation(req, res, '/api/wifi/mac-changer', 'ACTIVE', iface);
+      if (!auth) return;
       res.json(await tb.toolWifiMacChanger(iface, mac));
     } catch (err: any) {
       res.status(500).json({ error: err.message });

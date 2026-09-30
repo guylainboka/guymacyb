@@ -1,5 +1,6 @@
 import React, { useState } from 'react';
-import { WifiScanResult, WpaAuditResult, DeauthDetectionResult, WifiEncryption } from '../../types';
+import { WifiScanResult, WpaAuditResult, DeauthDetectionResult, WifiEncryption, TargetConfig } from '../../types';
+import { ActiveTestAuthModal } from '../common/ActiveTestAuthModal';
 
 interface WifiReseauViewProps {
   onGoToLab: () => void;
@@ -46,6 +47,34 @@ export const WifiReseauView: React.FC<WifiReseauViewProps> = ({ onGoToLab, onGoT
   const [macNew, setMacNew] = useState<string>('');
   const [macResult, setMacResult] = useState<any | null>(null);
   const [isMacChanging, setIsMacChanging] = useState(false);
+
+  // Autorisation légale : action WiFi en attente de confirmation d'attestation
+  // (source de vérité serveur : GET /api/wifi/auth-requirements)
+  const [pendingWifiAuth, setPendingWifiAuth] = useState<{
+    endpoint: string;
+    level: 'ACTIVE' | 'DESTRUCTIVE';
+    target: string;
+    run: (authorization: { operatorId: string; targetUrl: string; level: 'ACTIVE' | 'DESTRUCTIVE'; statement: string; confirmedAt: string }) => void;
+  } | null>(null);
+
+  const wifiTargetConfig: TargetConfig = {
+    url: pendingWifiAuth?.target || 'cible-wifi',
+    port: 0,
+    scope: 'strict',
+    authorized: false,
+    operatorId: 'SEC-OPS-0982',
+    localDbName: 'guymacyb',
+  };
+
+  /** Ouvre la modale d'attestation avant une action WiFi réelle agressive. */
+  const openWifiAuth = (
+    endpoint: string,
+    level: 'ACTIVE' | 'DESTRUCTIVE',
+    target: string,
+    run: (authorization: { operatorId: string; targetUrl: string; level: 'ACTIVE' | 'DESTRUCTIVE'; statement: string; confirmedAt: string }) => void
+  ) => {
+    setPendingWifiAuth({ endpoint, level, target, run });
+  };
 
   const handleScan = async () => {
     setIsScanning(true);
@@ -107,46 +136,47 @@ export const WifiReseauView: React.FC<WifiReseauViewProps> = ({ onGoToLab, onGoT
     }
   };
 
-  // Handlers attaques WiFi
-  const handleMonitorMode = async () => {
+  // Handlers attaques WiFi — chaque action agressive accepte une attestation
+  // légale (vérifiée mot pour mot côté serveur + journalisation immuable).
+  const handleMonitorMode = async (authorization?: any) => {
     setIsMonEnabling(true); setMonResult(null);
     try {
-      const r = await fetch('/api/wifi/monitor-mode', { method:'POST', headers:{'Content-Type':'application/json'}, body: JSON.stringify({ interface: atkIface }) });
+      const r = await fetch('/api/wifi/monitor-mode', { method:'POST', headers:{'Content-Type':'application/json'}, body: JSON.stringify({ interface: atkIface, authorization }) });
       setMonResult(await r.json());
     } catch (e:any) { setMonResult({ error: e.message }); }
     finally { setIsMonEnabling(false); }
   };
-  const handleHandshake = async () => {
+  const handleHandshake = async (authorization?: any) => {
     if (!hsBssid) return;
     setIsHsCapturing(true); setHsResult(null);
     try {
-      const r = await fetch('/api/wifi/handshake-capture', { method:'POST', headers:{'Content-Type':'application/json'}, body: JSON.stringify({ bssid: hsBssid, channel: hsChannel, interface: atkIface, duration: hsDuration }) });
+      const r = await fetch('/api/wifi/handshake-capture', { method:'POST', headers:{'Content-Type':'application/json'}, body: JSON.stringify({ bssid: hsBssid, channel: hsChannel, interface: atkIface, duration: hsDuration, authorization }) });
       setHsResult(await r.json());
     } catch (e:any) { setHsResult({ error: e.message }); }
     finally { setIsHsCapturing(false); }
   };
-  const handleCrack = async () => {
+  const handleCrack = async (authorization?: any) => {
     if (!crackCap) return;
     setIsCracking(true); setCrackResult(null);
     try {
-      const r = await fetch('/api/wifi/crack-handshake', { method:'POST', headers:{'Content-Type':'application/json'}, body: JSON.stringify({ capFile: crackCap, wordlist: crackWl || undefined }) });
+      const r = await fetch('/api/wifi/crack-handshake', { method:'POST', headers:{'Content-Type':'application/json'}, body: JSON.stringify({ capFile: crackCap, wordlist: crackWl || undefined, authorization }) });
       setCrackResult(await r.json());
     } catch (e:any) { setCrackResult({ error: e.message }); }
     finally { setIsCracking(false); }
   };
-  const handleWps = async () => {
+  const handleWps = async (authorization?: any) => {
     if (!wpsBssid) return;
     setIsWpsAttacking(true); setWpsResult(null);
     try {
-      const r = await fetch('/api/wifi/wps-attack', { method:'POST', headers:{'Content-Type':'application/json'}, body: JSON.stringify({ bssid: wpsBssid, interface: atkIface, mode: wpsMode, pin: wpsPin || undefined }) });
+      const r = await fetch('/api/wifi/wps-attack', { method:'POST', headers:{'Content-Type':'application/json'}, body: JSON.stringify({ bssid: wpsBssid, interface: atkIface, mode: wpsMode, pin: wpsPin || undefined, authorization }) });
       setWpsResult(await r.json());
     } catch (e:any) { setWpsResult({ error: e.message }); }
     finally { setIsWpsAttacking(false); }
   };
-  const handleMacChange = async () => {
+  const handleMacChange = async (authorization?: any) => {
     setIsMacChanging(true); setMacResult(null);
     try {
-      const r = await fetch('/api/wifi/mac-changer', { method:'POST', headers:{'Content-Type':'application/json'}, body: JSON.stringify({ interface: macIface, mac: macNew || undefined }) });
+      const r = await fetch('/api/wifi/mac-changer', { method:'POST', headers:{'Content-Type':'application/json'}, body: JSON.stringify({ interface: macIface, mac: macNew || undefined, authorization }) });
       setMacResult(await r.json());
     } catch (e:any) { setMacResult({ error: e.message }); }
     finally { setIsMacChanging(false); }
@@ -188,6 +218,25 @@ export const WifiReseauView: React.FC<WifiReseauViewProps> = ({ onGoToLab, onGoT
 
   return (
     <div className="h-full overflow-y-auto bg-[#0a0e18] text-[#dfe2f1] p-6">
+      {/* Modale d'autorisation légale — obligatoire avant tout outil WiFi agressif */}
+      <ActiveTestAuthModal
+        isOpen={pendingWifiAuth !== null}
+        onClose={() => setPendingWifiAuth(null)}
+        targetConfig={wifiTargetConfig}
+        onConfirm={(level, statement, confirmedAt) => {
+          const pending = pendingWifiAuth;
+          setPendingWifiAuth(null);
+          if (pending) {
+            pending.run({
+              operatorId: 'SEC-OPS-0982',
+              targetUrl: pending.target,
+              level,
+              statement,
+              confirmedAt,
+            });
+          }
+        }}
+      />
       <div className="max-w-7xl mx-auto">
         {/* En-tête */}
         <div className="mb-6 flex items-start justify-between">
@@ -631,8 +680,8 @@ export const WifiReseauView: React.FC<WifiReseauViewProps> = ({ onGoToLab, onGoT
                 </h3>
                 <div className="flex gap-2 mb-3">
                   <input type="text" value={atkIface} onChange={(e)=>setAtkIface(e.target.value)} placeholder="wlan0" className="flex-1 px-2 py-1.5 bg-[#0a0e18] border border-[#24314c] rounded text-xs font-mono text-[#dfe2f1] outline-none focus:border-emerald-500" />
-                  <button onClick={handleMonitorMode} disabled={isMonEnabling} className="px-3 py-1.5 text-xs bg-emerald-600/20 border border-emerald-500/40 text-emerald-400 rounded hover:bg-emerald-600/30 disabled:opacity-50 flex items-center gap-1" type="button">
-                    {isMonEnabling ? <><span className="material-symbols-outlined animate-spin text-[14px]">progress_activity</span></> : <><span className="material-symbols-outlined text-[14px]">play_arrow</span>Activer</>}
+                  <button onClick={() => openWifiAuth('/api/wifi/monitor-mode', 'ACTIVE', atkIface, (auth) => void handleMonitorMode(auth))} disabled={isMonEnabling} className="px-3 py-1.5 text-xs bg-emerald-600/20 border border-emerald-500/40 text-emerald-400 rounded hover:bg-emerald-600/30 disabled:opacity-50 flex items-center gap-1" type="button">
+                    {isMonEnabling ? <><span className="material-symbols-outlined animate-spin text-[14px]">progress_activity</span></> : <><span className="material-symbols-outlined text-[14px]">gavel</span>Attester puis activer</>}
                   </button>
                 </div>
                 {monResult && (
@@ -653,8 +702,8 @@ export const WifiReseauView: React.FC<WifiReseauViewProps> = ({ onGoToLab, onGoT
                 </div>
                 <div className="flex gap-2 mb-3">
                   <input type="text" value={macNew} onChange={(e)=>setMacNew(e.target.value)} placeholder="MAC (vide = aléatoire)" className="flex-1 px-2 py-1.5 bg-[#0a0e18] border border-[#24314c] rounded text-xs font-mono text-[#dfe2f1] outline-none focus:border-amber-500" />
-                  <button onClick={handleMacChange} disabled={isMacChanging} className="px-3 py-1.5 text-xs bg-amber-600/20 border border-amber-500/40 text-amber-400 rounded hover:bg-amber-600/30 disabled:opacity-50 flex items-center gap-1" type="button">
-                    {isMacChanging ? <span className="material-symbols-outlined animate-spin text-[14px]">progress_activity</span> : 'Changer'}
+                  <button onClick={() => openWifiAuth('/api/wifi/mac-changer', 'ACTIVE', macIface, (auth) => void handleMacChange(auth))} disabled={isMacChanging} className="px-3 py-1.5 text-xs bg-amber-600/20 border border-amber-500/40 text-amber-400 rounded hover:bg-amber-600/30 disabled:opacity-50 flex items-center gap-1" type="button">
+                    {isMacChanging ? <span className="material-symbols-outlined animate-spin text-[14px]">progress_activity</span> : 'Attester puis changer'}
                   </button>
                 </div>
                 {macResult && (
@@ -677,7 +726,7 @@ export const WifiReseauView: React.FC<WifiReseauViewProps> = ({ onGoToLab, onGoT
                   <div className="flex gap-2">
                     <input type="number" value={hsChannel} onChange={(e)=>setHsChannel(parseInt(e.target.value)||6)} min={1} max={165} placeholder="Canal" className="w-20 px-2 py-1.5 bg-[#0a0e18] border border-[#24314c] rounded text-xs font-mono text-[#dfe2f1] outline-none" />
                     <input type="number" value={hsDuration} onChange={(e)=>setHsDuration(parseInt(e.target.value)||30)} min={5} max={300} placeholder="Durée (s)" className="w-24 px-2 py-1.5 bg-[#0a0e18] border border-[#24314c] rounded text-xs font-mono text-[#dfe2f1] outline-none" />
-                    <button onClick={handleHandshake} disabled={isHsCapturing || !hsBssid} className="flex-1 px-3 py-1.5 text-xs bg-sky-600/20 border border-sky-500/40 text-sky-400 rounded hover:bg-sky-600/30 disabled:opacity-50 flex items-center justify-center gap-1" type="button">
+                    <button onClick={() => openWifiAuth('/api/wifi/handshake-capture', 'ACTIVE', hsBssid || 'bssid-cible', (auth) => void handleHandshake(auth))} disabled={isHsCapturing || !hsBssid} className="flex-1 px-3 py-1.5 text-xs bg-sky-600/20 border border-sky-500/40 text-sky-400 rounded hover:bg-sky-600/30 disabled:opacity-50 flex items-center justify-center gap-1" type="button">
                       {isHsCapturing ? <><span className="material-symbols-outlined animate-spin text-[14px]">progress_activity</span> Capture...</> : 'Capturer'}
                     </button>
                   </div>
@@ -703,7 +752,7 @@ export const WifiReseauView: React.FC<WifiReseauViewProps> = ({ onGoToLab, onGoT
                 <div className="space-y-2 mb-3">
                   <input type="text" value={crackCap} onChange={(e)=>setCrackCap(e.target.value)} placeholder="Chemin du .cap" className="w-full px-2 py-1.5 bg-[#0a0e18] border border-[#24314c] rounded text-xs font-mono text-[#dfe2f1] outline-none focus:border-rose-500" />
                   <input type="text" value={crackWl} onChange={(e)=>setCrackWl(e.target.value)} placeholder="Wordlist (vide = auto)" className="w-full px-2 py-1.5 bg-[#0a0e18] border border-[#24314c] rounded text-xs font-mono text-[#dfe2f1] outline-none" />
-                  <button onClick={handleCrack} disabled={isCracking || !crackCap} className="w-full px-3 py-1.5 text-xs bg-rose-600/20 border border-rose-500/40 text-rose-400 rounded hover:bg-rose-600/30 disabled:opacity-50 flex items-center justify-center gap-1" type="button">
+                  <button onClick={() => openWifiAuth('/api/wifi/crack-handshake', 'DESTRUCTIVE', crackCap || 'fichier-cap', (auth) => void handleCrack(auth))} disabled={isCracking || !crackCap} className="w-full px-3 py-1.5 text-xs bg-rose-600/20 border border-rose-500/40 text-rose-400 rounded hover:bg-rose-600/30 disabled:opacity-50 flex items-center justify-center gap-1" type="button">
                     {isCracking ? <><span className="material-symbols-outlined animate-spin text-[14px]">progress_activity</span> Cassage...</> : 'Casser le handshake'}
                   </button>
                 </div>
@@ -733,7 +782,7 @@ export const WifiReseauView: React.FC<WifiReseauViewProps> = ({ onGoToLab, onGoT
                     <option value="brute">Brute force PIN</option>
                   </select>
                   <input type="text" value={wpsPin} onChange={(e)=>setWpsPin(e.target.value)} placeholder="PIN (mode pin)" disabled={wpsMode!=='pin'} className="px-2 py-1.5 bg-[#0a0e18] border border-[#24314c] rounded text-xs font-mono text-[#dfe2f1] outline-none disabled:opacity-40" />
-                  <button onClick={handleWps} disabled={isWpsAttacking || !wpsBssid} className="px-3 py-1.5 text-xs bg-violet-600/20 border border-violet-500/40 text-violet-400 rounded hover:bg-violet-600/30 disabled:opacity-50 flex items-center justify-center gap-1" type="button">
+                  <button onClick={() => openWifiAuth('/api/wifi/wps-attack', 'DESTRUCTIVE', wpsBssid || 'bssid-cible', (auth) => void handleWps(auth))} disabled={isWpsAttacking || !wpsBssid} className="px-3 py-1.5 text-xs bg-violet-600/20 border border-violet-500/40 text-violet-400 rounded hover:bg-violet-600/30 disabled:opacity-50 flex items-center justify-center gap-1" type="button">
                     {isWpsAttacking ? <><span className="material-symbols-outlined animate-spin text-[14px]">progress_activity</span> Attaque...</> : 'Lancer'}
                   </button>
                 </div>

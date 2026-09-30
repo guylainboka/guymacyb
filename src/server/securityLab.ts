@@ -1,6 +1,7 @@
 import { getDatabase, saveDatabaseToDisk } from './db';
 import { Finding, Severity, LabAttackVector } from '../types';
 import { LAB_ATTACK_VECTORS } from '../data/labAttackVectors';
+import { computeCvss31 } from './cvss31';
 import dns from 'dns/promises';
 import net from 'net';
 
@@ -20,14 +21,13 @@ function nextLabFindingSeq(): number {
 }
 
 /**
- * Score CVSS théorique conventionnel dérivé de la sévérité, selon les
- * bandes NVD (CVSS v3.1) : CRITICAL 9.0–10.0, HIGH 7.0–8.9, MEDIUM 4.0–6.9,
- * LOW 0.1–3.9 → point médian de la bande.
+ * Score CVSS DE SECOURS pour les findings dont la source ne fournit PAS de
+ * vecteur v3.1 (ex. noyau de scan Rust, items nikto) : point médian des
+ * bandes NVD (CRITICAL 9.5 / HIGH 8.0 / MEDIUM 5.5 / LOW 2.5), déterministe.
  *
- * ⚠ Ce n'est PAS un calcul vectoriel CVSS v3.1 (AV/AC/PR/UI/S/C/I/A) —
- * c'est la valeur de référence appliquée de façon DÉTERMINISTE et
- * IDENTIQUE partout. (Une vraie calculatrice vectorielle v3.1 est
- * prévue en phase 3.)
+ * ⚠ Chaque fois qu'un vecteur CVSS v3.1 réel est disponible (datasets du lab,
+ * familles de tests actifs), le score est CALCULÉ via computeCvss31() —
+ * cette fonction n'est que le repli documenté.
  */
 export function theoreticalCvssFromSeverity(severity: Severity): number {
   switch (severity) {
@@ -40,6 +40,29 @@ export function theoreticalCvssFromSeverity(severity: Severity): number {
     default: // LOW / INFO
       return 2.5;
   }
+}
+
+/**
+ * Résout le score CVSS RÉEL d'un vecteur du lab : calcul vectoriel v3.1
+ * (AV/AC/PR/UI/S/C/I/A) à partir du vecteur officiel du dataset. La
+ * sévérité affichée est DÉRIVÉE du score calculé — score et sévérité ne
+ * peuvent plus jamais diverger. Fallback documenté si le dataset n'a pas
+ * encore de vecteur.
+ */
+export function resolveVectorCvss(vector: Pick<LabAttackVector, 'cvssVector' | 'severity'>): {
+  score: number;
+  severity: Severity;
+  vector: string | null;
+} {
+  if (vector.cvssVector) {
+    try {
+      const computed = computeCvss31(vector.cvssVector);
+      return { score: computed.baseScore, severity: computed.severity as Severity, vector: computed.vector };
+    } catch {
+      // vecteur malformé dans le dataset → repli documenté (ne doit pas arriver)
+    }
+  }
+  return { score: theoreticalCvssFromSeverity(vector.severity), severity: vector.severity, vector: null };
 }
 
 // ============================================================
@@ -517,6 +540,9 @@ export interface LabProbeResult {
   probeSent: string;
   realResponse: string;
   observations: string[];
+  /** Vecteur CVSS v3.1 officiel du vecteur d'attaque + score CALCULÉ. */
+  cvssVector: string | null;
+  cvssScore: number;
   findingCandidate?: Finding;
 }
 
@@ -543,6 +569,7 @@ export async function executeLabProbe(
   const requestsSent = outcome.evidences.length;
   const probeSent = primary ? `${primary.method} ${primary.url}` : `Sondes réelles contre ${targetUrl}`;
   const realResponse = primary ? formatEvidence(primary) : 'Aucune réponse réelle capturée.';
+  const cvssResolved = resolveVectorCvss(vector);
 
   let findingCandidate: Finding | undefined = undefined;
 
@@ -551,7 +578,7 @@ export async function executeLabProbe(
     try {
       const db = await getDatabase();
       const findingId = `LABREAL-FND-${Date.now().toString(36).toUpperCase()}-${nextLabFindingSeq()}`;
-      const cvss = theoreticalCvssFromSeverity(vector.severity);
+      const cvss = cvssResolved.score;
       const scanId = `SCAN-LABREAL-${Date.now().toString(36).toUpperCase()}`;
       const targetDomain = safeDomain(targetUrl);
 
@@ -580,8 +607,9 @@ export async function executeLabProbe(
       const findingObj: Finding = {
         id: findingId,
         title: `[Lab Réel] ${vector.name}`,
-        severity: vector.severity,
+        severity: cvssResolved.severity,
         cvss,
+        cvssVector: cvssResolved.vector,
         confidence: 90,
         status: 'VALIDATED',
         affectedComponent: targetUrl,
@@ -607,8 +635,8 @@ export async function executeLabProbe(
         `INSERT INTO findings (
           id, scan_id, target_url, title, severity, cvss, confidence, status,
           affected_component, category, cwe, description, evidence_request,
-          evidence_response, impact, remediation_title, remediation_steps_json, signature, created_at
-        ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, datetime('now'))`,
+          evidence_response, impact, remediation_title, remediation_steps_json, signature, cvss_vector, created_at
+        ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, datetime('now'))`,
         [
           findingObj.id,
           scanId,
@@ -628,6 +656,7 @@ export async function executeLabProbe(
           findingObj.remediationTitle,
           JSON.stringify(findingObj.remediationSteps),
           findingObj.signature,
+          findingObj.cvssVector ?? null,
         ]
       );
 
@@ -659,6 +688,8 @@ export async function executeLabProbe(
     probeSent,
     realResponse,
     observations: outcome.observations,
+    cvssVector: cvssResolved.vector,
+    cvssScore: cvssResolved.score,
     findingCandidate,
   };
 }
@@ -691,10 +722,9 @@ export async function commitFullLabSuiteToReport(
     totalRequests += probe.requestsSent;
     if (probe.verdict === 'VULNERABLE') {
       vulnerableCount++;
-      const cvss = theoreticalCvssFromSeverity(vector.severity);
-      if (cvss > maxCvss) {
-        maxCvss = cvss;
-        maxSeverity = vector.severity;
+      if (probe.cvssScore > maxCvss) {
+        maxCvss = probe.cvssScore;
+        maxSeverity = probe.findingCandidate?.severity ?? vector.severity;
       }
     } else if (probe.verdict === 'PROTECTED') {
       protectedCount++;

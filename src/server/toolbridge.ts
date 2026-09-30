@@ -633,9 +633,10 @@ export const toolIperf3 = (
 
 // ============================================================
 //  Scripts WiFi (security-scripts/wifi-*.sh)
-//  — Tous fallback en mode "builtin-simulated" si les outils
-//    (iw, iwlist, aircrack-ng, tshark) ne sont pas disponibles
-//    ou si le mode monitor ne peut être activé.
+//  — Aucun fallback fabriqué : si les outils (iw, iwlist, aircrack-ng,
+//    tshark, hostapd) ne sont pas disponibles ou si le mode monitor ne
+//    peut être activé, le script renvoie un état honnête explicite
+//    (mode: no-wireless-hardware / root-required / outil-required).
 // ============================================================
 
 export const toolWifiScan = (iface?: string) =>
@@ -698,6 +699,21 @@ export const toolWifiMacChanger = (iface: string, mac?: string) =>
     'wifi-mac-changer.sh',
     [iface, ...(mac ? [mac] : [])],
     15_000
+  );
+
+// Evil Twin RÉEL : hostapd (AP usurpé) + dnsmasq (DHCP) + vérification d'association.
+// Requiert root, une interface en mode monitor et hostapd/dnsmasq installés —
+// sinon état honnête (hostapd-required / root-required / no-wireless-hardware).
+export const toolWifiEvilTwin = (
+  ssid: string,
+  channel: number | string,
+  iface: string,
+  duration: number | string
+) =>
+  runScript(
+    'wifi-evil-twin.sh',
+    [ssid, String(channel), iface, String(duration)],
+    (Number(duration) || 60) * 1000 + 20_000
   );
 
 // —— Terminal intégré (bash / powershell / cmd / python)

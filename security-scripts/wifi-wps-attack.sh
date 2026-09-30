@@ -9,7 +9,7 @@
 #
 # Strategy:
 #   1. reaver ou bully (root + monitor mode) → attaque réelle
-#   2. Aucun backend disponible — état honnête (PAS de données simulées) :
+#   2. Aucun backend disponible — état honnête (PAS de données inventées) :
 #      mode "reaver-required" / "root-required" / "no-wireless-hardware"
 #
 # Sortie : un objet JSON unique sur stdout.
@@ -45,12 +45,12 @@ def has_wireless_hardware():
         pass
     return False
 
-# État honnête : aucun backend temps réel disponible (PAS de données simulées).
+# État honnête : aucun backend temps réel disponible (PAS de données inventées).
 if sys.platform != "linux":
     result["mode"] = "linux-required"
     result["error"] = ("L'attaque WPS nécessite Linux (WSL sur Windows). "
                       "Lancez wsl.exe -d Ubuntu -- bash security-scripts/wifi-wps-attack.sh <bssid> <iface> <mode>. "
-                      "GuymaCyb ne génère jamais de données simulées.")
+                      "GuymaCyb ne génère jamais de données inventées.")
     print(json.dumps(result, ensure_ascii=False)); sys.exit(0)
 
 if not has_wireless_hardware():
@@ -58,7 +58,7 @@ if not has_wireless_hardware():
     result["error"] = ("Aucun adaptateur sans-fil détecté sur ce système. "
                       "L'attaque WPS nécessite une clé WiFi physique compatible mode monitor + reaver/bully (root). "
                       "Sur Windows, ces outils tournent via WSL (wsl.exe -d Ubuntu -- airmon-ng start wlan0). "
-                      "GuymaCyb ne génère jamais de données simulées.")
+                      "GuymaCyb ne génère jamais de données inventées.")
     print(json.dumps(result, ensure_ascii=False)); sys.exit(0)
 
 if not has_reaver and not has_bully:
@@ -66,7 +66,7 @@ if not has_reaver and not has_bully:
     result["error"] = ("Attaque WPS indisponible : reaver (et bully) ne sont pas installés. "
                       "Installez via WSL (Windows) : apt install reaver bully. "
                       "reaver -K 1 lance l'attaque Pixie-Dust sur le WPS PIN de l'AP cible. "
-                      "GuymaCyb ne génère jamais de données simulées.")
+                      "GuymaCyb ne génère jamais de données inventées.")
     print(json.dumps(result, ensure_ascii=False)); sys.exit(0)
 
 if not is_root:
@@ -75,7 +75,7 @@ if not is_root:
                       "reaver/bully accèdent à l'interface réseau brute en mode monitor (raw socket). "
                       "Relancez via : sudo bash security-scripts/wifi-wps-attack.sh <bssid> <iface> <mode> [pin], "
                       "ou sous WSL : wsl.exe -d Ubuntu -u root -- bash ... "
-                      "GuymaCyb ne génère jamais de données simulées.")
+                      "GuymaCyb ne génère jamais de données inventées.")
     print(json.dumps(result, ensure_ascii=False)); sys.exit(0)
 
 # Attaque réelle

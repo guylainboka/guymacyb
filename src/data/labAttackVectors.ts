@@ -8,6 +8,7 @@ export const LAB_ATTACK_VECTORS: LabAttackVector[] = [
     owasp: 'A03:2021 - Injection',
     cwe: 'CWE-89: Improper Neutralization of Special Elements used in an SQL Command',
     severity: 'CRITICAL',
+    cvssVector: 'CVSS:3.1/AV:N/AC:L/PR:N/UI:N/S:U/C:H/I:H/A:H', // = 9.8 calculé
     difficulty: 'MOYEN',
     description:
       'Tentative de manipulation de requêtes SQL via des paramètres utilisateur non assainis. Permet le contournement d’authentification ou l’exfiltration de données.',
@@ -63,6 +64,7 @@ const user = await db.query(
     owasp: 'A03:2021 - Injection',
     cwe: 'CWE-79: Improper Neutralization of Input During Web Page Generation',
     severity: 'HIGH',
+    cvssVector: 'CVSS:3.1/AV:N/AC:L/PR:N/UI:R/S:C/C:H/I:L/A:N', // = 8.2 calculé
     difficulty: 'FAIBLE',
     description:
       'Injection de code script malveillant dans la réponse HTTP suite à un manque d’échappement des données reçues via les paramètres d’URL ou formulaires.',
@@ -110,6 +112,7 @@ res.send(\`<p>Recherche : \${cleanQuery}</p>\`);`,
     owasp: 'A10:2021 - Server-Side Request Forgery',
     cwe: 'CWE-918: Server-Side Request Forgery (SSRF)',
     severity: 'CRITICAL',
+    cvssVector: 'CVSS:3.1/AV:N/AC:L/PR:N/UI:N/S:C/C:H/I:L/A:N', // = 9.3 calculé
     difficulty: 'ÉLEVÉ',
     description:
       'L’application Web télécharge ou interroge une ressource distante en utilisant une URL fournie par l’utilisateur, permettant d’interroger le réseau interne ou les métadonnées cloud (AWS/GCP).',
@@ -164,6 +167,7 @@ if (addr.range() !== 'unicast') {
     owasp: 'A01:2021 - Broken Access Control',
     cwe: 'CWE-639: Authorization Bypass Through User-Controlled Key',
     severity: 'HIGH',
+    cvssVector: 'CVSS:3.1/AV:N/AC:L/PR:L/UI:N/S:U/C:H/I:L/A:N', // = 7.1 calculé
     difficulty: 'FAIBLE',
     description:
       'L’utilisateur modifie l’identifiant numérique d’une ressource dans l’URL (ex: /api/invoices/1042) pour accéder aux données confidentielles d’un autre client sans contrôle de droits.',
@@ -218,6 +222,7 @@ res.json(invoice);`,
     owasp: 'A07:2021 - Identification and Authentication Failures',
     cwe: 'CWE-287: Improper Authentication',
     severity: 'CRITICAL',
+    cvssVector: 'CVSS:3.1/AV:N/AC:L/PR:N/UI:N/S:U/C:H/I:H/A:H', // = 9.8 calculé
     difficulty: 'MOYEN',
     description:
       'Contournement de la validation cryptographique du jeton JWT par substitution de l’algorithme à "none" ou utilisation d’un secret de signature faible.',
@@ -269,6 +274,7 @@ const payload = jwt.verify(token, publicKey, {
     owasp: 'A01:2021 - Broken Access Control',
     cwe: 'CWE-22: Improper Limitation of a Pathname to a Restricted Directory',
     severity: 'HIGH',
+    cvssVector: 'CVSS:3.1/AV:N/AC:L/PR:N/UI:N/S:U/C:H/I:N/A:N', // = 7.5 calculé
     difficulty: 'FAIBLE',
     description:
       'Exploitation des séquences de remontée de répertoires "../" pour lire des fichiers système ou des configurations sensibles en dehors du dossier prévu.',
@@ -321,6 +327,7 @@ res.sendFile(targetPath);`,
     owasp: 'A04:2021 - Insecure Design',
     cwe: 'CWE-307: Improper Restriction of Excessive Authentication Attempts',
     severity: 'MEDIUM',
+    cvssVector: 'CVSS:3.1/AV:N/AC:L/PR:N/UI:N/S:U/C:L/I:N/A:N', // = 5.3 calculé
     difficulty: 'FAIBLE',
     description:
       'Absence de quota ou de seuil sur les points de terminaison sensibles (/api/login, /api/reset-password), permettant les attaques par force brute et credential stuffing.',
@@ -379,6 +386,7 @@ app.post('/api/login', authLimiter, handleLogin);`,
     owasp: 'A05:2021 - Security Misconfiguration',
     cwe: 'CWE-942: Permissive Cross-Domain Policy with Untrusted Domains',
     severity: 'MEDIUM',
+    cvssVector: 'CVSS:3.1/AV:N/AC:L/PR:N/UI:R/S:U/C:H/I:N/A:N', // = 6.5 calculé
     difficulty: 'FAIBLE',
     description:
       'Configuration trop permissive du partage de ressources entre origines multiples (CORS), permettant à des sites tiers non autorisés de lire des données privées de l’utilisateur authentifié.',

@@ -1,6 +1,7 @@
 import { getDatabase, saveDatabaseToDisk } from './db';
 import { Finding, Severity } from '../types';
 import { AuthorizationLevel } from './authorization';
+import { computeCvss31 } from './cvss31';
 import { realHttpProbe, probeSqli, probeXss, probeCors, probeRateLimit, theoreticalCvssFromSeverity } from './securityLab';
 import { toolNikto } from './toolbridge';
 import net from 'net';
@@ -68,7 +69,35 @@ interface PendingFinding {
   remediationTitle: string;
   remediationSteps: string[];
   affectedComponent: string;
+  /** Vecteur CVSS v3.1 officiel du constat — score CALCULÉ (repli : bandes NVD). */
+  cvssVector?: string;
 }
+
+/**
+ * Vecteurs CVSS v3.1 officiels par classe de constat — calibrés pour que le
+ * score CALCULÉ (computeCvss31) tombe dans la bande de sévérité déclarée.
+ * La sévérité finale est de toute façon dérivée du score calculé.
+ */
+const V = {
+  // En-têtes de durcissement absents
+  MEDIUM_HEADER: 'CVSS:3.1/AV:N/AC:L/PR:N/UI:R/S:U/C:L/I:N/A:N', // 4.3
+  LOW_HEADER: 'CVSS:3.1/AV:N/AC:H/PR:N/UI:R/S:U/C:L/I:N/A:N', // 3.1
+  // Verbes HTTP
+  MEDIUM_TRACE: 'CVSS:3.1/AV:N/AC:L/PR:N/UI:N/S:U/C:L/I:N/A:N', // 5.3
+  CRITICAL_PUT: 'CVSS:3.1/AV:N/AC:L/PR:N/UI:N/S:U/C:H/I:H/A:H', // 9.8
+  // TLS
+  HIGH_CLEARTEXT: 'CVSS:3.1/AV:N/AC:L/PR:N/UI:N/S:U/C:H/I:L/A:N', // 8.2
+  MEDIUM_TLS: 'CVSS:3.1/AV:N/AC:H/PR:N/UI:N/S:U/C:H/I:N/A:N', // 5.9
+  // Fuzzing
+  CRITICAL_FILE: 'CVSS:3.1/AV:N/AC:L/PR:N/UI:N/S:U/C:H/I:H/A:H', // 9.8
+  HIGH_RESOURCE: 'CVSS:3.1/AV:N/AC:L/PR:N/UI:N/S:U/C:H/I:N/A:N', // 7.5
+  // Injections
+  HIGH_SQLI: 'CVSS:3.1/AV:N/AC:L/PR:N/UI:N/S:U/C:H/I:L/A:N', // 8.2
+  HIGH_XSS: 'CVSS:3.1/AV:N/AC:L/PR:N/UI:R/S:C/C:H/I:L/A:N', // 8.2
+  // CORS / rate limit
+  MEDIUM_CORS: 'CVSS:3.1/AV:N/AC:L/PR:N/UI:R/S:U/C:H/I:N/A:N', // 6.5
+  MEDIUM_RATE: 'CVSS:3.1/AV:N/AC:L/PR:N/UI:N/S:U/C:L/I:N/A:N', // 5.3
+} as const;
 
 async function persistRealFinding(
   scanId: string,
@@ -78,12 +107,24 @@ async function persistRealFinding(
   tag: string
 ): Promise<Finding> {
   const db = await getDatabase();
-  const cvss = theoreticalCvssFromSeverity(p.severity);
+  // Score CVSS RÉEL : calcul vectoriel v3.1 quand un vecteur est fourni
+  // (la sévérité affichée est DÉRIVÉE du score calculé) ; sinon repli
+  // documenté par bandes NVD (items nikto / sources sans vecteur).
+  let cvss: number;
+  let severity: Severity = p.severity;
+  if (p.cvssVector) {
+    const computed = computeCvss31(p.cvssVector);
+    cvss = computed.baseScore;
+    severity = computed.severity as Severity;
+  } else {
+    cvss = theoreticalCvssFromSeverity(p.severity);
+  }
   const findingObj: Finding = {
     id: `ACT-FND-${Date.now().toString(36).toUpperCase()}-${Math.abs(persistSeq++).toString(36).toUpperCase()}`,
     title: p.title,
-    severity: p.severity,
+    severity,
     cvss,
+    cvssVector: p.cvssVector ?? null,
     confidence: 88,
     status: 'VALIDATED',
     affectedComponent: p.affectedComponent,
@@ -107,8 +148,8 @@ async function persistRealFinding(
     `INSERT INTO findings (
       id, scan_id, target_url, title, severity, cvss, confidence, status,
       affected_component, category, cwe, description, evidence_request,
-      evidence_response, impact, remediation_title, remediation_steps_json, signature, created_at
-    ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, datetime('now'))`,
+      evidence_response, impact, remediation_title, remediation_steps_json, signature, cvss_vector, created_at
+    ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, datetime('now'))`,
     [
       findingObj.id,
       scanId,
@@ -128,6 +169,7 @@ async function persistRealFinding(
       findingObj.remediationTitle,
       JSON.stringify(findingObj.remediationSteps),
       findingObj.signature,
+      findingObj.cvssVector ?? null,
     ]
   );
   saveDatabaseToDisk(db);
@@ -155,12 +197,12 @@ async function familyHeaders(scanId: string, targetUrl: string, operatorId: stri
   }
   logs.push(`[OK] GET ${targetUrl} → HTTP ${ev.status} (${ev.latencyMs}ms réels)`);
 
-  const checks: { header: string; label: string; severity: Severity; cwe: string; advice: string }[] = [
-    { header: 'content-security-policy', label: 'Content-Security-Policy', severity: 'MEDIUM', cwe: 'CWE-1021: Improper Restriction of Rendered UI Layers', advice: 'Déployer une politique CSP restrictive (default-src \'self\').', },
-    { header: 'x-content-type-options', label: 'X-Content-Type-Options', severity: 'LOW', cwe: 'CWE-430: Deployment of Wrong Handler', advice: 'Ajouter X-Content-Type-Options: nosniff.' },
-    { header: 'x-frame-options', label: 'X-Frame-Options / frame-ancestors', severity: 'MEDIUM', cwe: 'CWE-1021', advice: 'Interdire l\'encapsulation (X-Frame-Options: DENY ou CSP frame-ancestors).' },
-    { header: 'referrer-policy', label: 'Referrer-Policy', severity: 'LOW', cwe: 'CWE-200: Exposure of Sensitive Information', advice: 'Définir Referrer-Policy: strict-origin-when-cross-origin.' },
-    { header: 'permissions-policy', label: 'Permissions-Policy', severity: 'LOW', cwe: 'CWE-1021', advice: 'Restreindre les API navigateur via Permissions-Policy.' },
+  const checks: { header: string; label: string; severity: Severity; cwe: string; advice: string; cvssVector: string }[] = [
+    { header: 'content-security-policy', label: 'Content-Security-Policy', severity: 'MEDIUM', cwe: 'CWE-1021: Improper Restriction of Rendered UI Layers', advice: 'Déployer une politique CSP restrictive (default-src \'self\').', cvssVector: V.MEDIUM_HEADER },
+    { header: 'x-content-type-options', label: 'X-Content-Type-Options', severity: 'LOW', cwe: 'CWE-430: Deployment of Wrong Handler', advice: 'Ajouter X-Content-Type-Options: nosniff.', cvssVector: V.LOW_HEADER },
+    { header: 'x-frame-options', label: 'X-Frame-Options / frame-ancestors', severity: 'MEDIUM', cwe: 'CWE-1021', advice: 'Interdire l\'encapsulation (X-Frame-Options: DENY ou CSP frame-ancestors).', cvssVector: V.MEDIUM_HEADER },
+    { header: 'referrer-policy', label: 'Referrer-Policy', severity: 'LOW', cwe: 'CWE-200: Exposure of Sensitive Information', advice: 'Définir Referrer-Policy: strict-origin-when-cross-origin.', cvssVector: V.LOW_HEADER },
+    { header: 'permissions-policy', label: 'Permissions-Policy', severity: 'LOW', cwe: 'CWE-1021', advice: 'Restreindre les API navigateur via Permissions-Policy.', cvssVector: V.LOW_HEADER },
   ];
 
   let missing = 0;
@@ -181,6 +223,7 @@ async function familyHeaders(scanId: string, targetUrl: string, operatorId: stri
           remediationTitle: 'Durcissement des en-têtes HTTP',
           remediationSteps: [c.advice],
           affectedComponent: targetUrl,
+          cvssVector: c.cvssVector,
         }, 'headers')
       );
     } else {
@@ -203,6 +246,7 @@ async function familyHeaders(scanId: string, targetUrl: string, operatorId: stri
         remediationTitle: 'Masquer la bannière serveur',
         remediationSteps: ['suppression de la directive ServerTokens (Apache) ou server_tokens off (Nginx).'],
         affectedComponent: targetUrl,
+        cvssVector: V.LOW_HEADER,
       }, 'headers')
     );
   }
@@ -252,6 +296,7 @@ async function familyMethods(scanId: string, targetUrl: string, operatorId: stri
         remediationTitle: 'Désactiver TRACE',
         remediationSteps: ['Nginx: trace_method off / Apache: TraceEnable off.'],
         affectedComponent: targetUrl,
+        cvssVector: V.MEDIUM_TRACE,
       }, 'methods')
     );
   } else {
@@ -277,6 +322,7 @@ async function familyMethods(scanId: string, targetUrl: string, operatorId: stri
         remediationTitle: 'Restreindre les verbes d\'écriture',
         remediationSteps: ['Désactiver PUT/DELETE/MKCOL au niveau du serveur web sauf endpoints explicitement conçus.'],
         affectedComponent: canaryPath,
+        cvssVector: V.CRITICAL_PUT,
       }, 'methods')
     );
   } else {
@@ -323,6 +369,7 @@ async function familyTls(scanId: string, targetUrl: string, operatorId: string):
         remediationTitle: 'Déployer HTTPS (HSTS)',
         remediationSteps: ['Certificat TLS valide + redirection 301 + Strict-Transport-Security.'],
         affectedComponent: targetUrl,
+        cvssVector: V.HIGH_CLEARTEXT,
       }, 'tls')
     );
     return {
@@ -372,6 +419,7 @@ async function familyTls(scanId: string, targetUrl: string, operatorId: string):
         remediationTitle: 'Renouveler le certificat',
         remediationSteps: ['Renouvellement (Let\'s Encrypt / ACME) et automatisation du renouvellement.'],
         affectedComponent: host,
+        cvssVector: V.HIGH_CLEARTEXT,
       }, 'tls')
     );
   } else if (info.protocol && info.protocol < 'TLSv1.2') {
@@ -388,6 +436,7 @@ async function familyTls(scanId: string, targetUrl: string, operatorId: string):
         remediationTitle: 'Imposer TLS 1.2+',
         remediationSteps: ['Désactiver TLSv1.0/1.1 dans la configuration du serveur.'],
         affectedComponent: host,
+        cvssVector: V.MEDIUM_TLS,
       }, 'tls')
     );
   }
@@ -448,6 +497,7 @@ async function familyDirbrute(scanId: string, targetUrl: string, operatorId: str
             remediationTitle: 'Restreindre l\'accès aux ressources sensibles',
             remediationSteps: ['Bloquer au niveau du serveur web, déplacer hors de la racine web, authentification obligatoire.'],
             affectedComponent: `${base}/${p}`,
+            cvssVector: p === '.env' || p === '.git/config' ? V.CRITICAL_FILE : V.HIGH_RESOURCE,
           }, 'dirbrute')
         );
       }
@@ -489,8 +539,8 @@ async function familyInjection(scanId: string, targetUrl: string, operatorId: st
   }
 
   for (const [name, outcome, vectorMeta] of [
-    ['SQLi', sqli, { title: 'Injection SQL détectée (erreur SQL exposée)', severity: 'HIGH' as Severity, cwe: 'CWE-89: SQL Injection', desc: 'La réponse réelle expose une erreur SQL brute face à un payload de détection.' }],
-    ['XSS', xss, { title: 'XSS réfléchi détecté (reflet brut)', severity: 'HIGH' as Severity, cwe: 'CWE-79: Cross-site Scripting', desc: 'Le marqueur de sonde est réfléchi brut dans le HTML réel.' }],
+    ['SQLi', sqli, { title: 'Injection SQL détectée (erreur SQL exposée)', severity: 'HIGH' as Severity, cwe: 'CWE-89: SQL Injection', desc: 'La réponse réelle expose une erreur SQL brute face à un payload de détection.', cvssVector: V.HIGH_SQLI }],
+    ['XSS', xss, { title: 'XSS réfléchi détecté (reflet brut)', severity: 'HIGH' as Severity, cwe: 'CWE-79: Cross-site Scripting', desc: 'Le marqueur de sonde est réfléchi brut dans le HTML réel.', cvssVector: V.HIGH_XSS }],
   ] as const) {
     logs.push(`[${name}] ${outcome.verdict} — ${outcome.observations[0] ?? ''}`);
     if (outcome.verdict === 'VULNERABLE') {
@@ -508,6 +558,7 @@ async function familyInjection(scanId: string, targetUrl: string, operatorId: st
           remediationTitle: 'Requêtes paramétrées + échappement contextuel',
           remediationSteps: ['Requêtes préparées (SQL) / échappement HTML contextuel + CSP (XSS).'],
           affectedComponent: ev.url,
+          cvssVector: vectorMeta.cvssVector,
         }, 'injection')
       );
     }
@@ -551,6 +602,7 @@ async function familyCors(scanId: string, targetUrl: string, operatorId: string)
         remediationTitle: 'Liste blanche d\'origines stricte',
         remediationSteps: ['Ne jamais refléter l\'origine arbitrairement ; lister les origines de confiance côté serveur.'],
         affectedComponent: ev.url,
+        cvssVector: V.MEDIUM_CORS,
       }, 'cors')
     );
   }
@@ -591,6 +643,7 @@ async function familyRateLimit(scanId: string, targetUrl: string, operatorId: st
         remediationTitle: 'Rate limiting applicatif / anti-brute-force',
         remediationSteps: ['Token bucket / sliding window par IP+session, CAPTCHA progressif.'],
         affectedComponent: targetUrl,
+        cvssVector: V.MEDIUM_RATE,
       }, 'ratelimit')
     );
   }

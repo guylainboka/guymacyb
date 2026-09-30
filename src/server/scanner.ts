@@ -8,7 +8,7 @@
 //   3. exposer la même interface ScanResult qu'avant (compatibilité frontend).
 //
 // Si le noyau Rust n'est pas compilé, on renvoie un objet d'erreur propre
-// (plus de faux scan simulé).
+// (jamais de faux scan fabriqué).
 
 import { getDatabase, saveDatabaseToDisk } from './db';
 import { coreScan, CoreScanResult } from './toolbridge';
@@ -112,13 +112,14 @@ export async function runRealAnalysis(
     for (const f of result.findings || []) {
       const fId = `${scanId}-${f.id}`;
       db.run(
-        `INSERT OR REPLACE INTO findings (id, scan_id, target_url, title, severity, cvss, confidence, status, affected_component, category, cwe, description, evidence_request, evidence_response, impact, remediation_title, remediation_steps_json, signature, created_at)
-         VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, datetime('now'))`,
+        `INSERT OR REPLACE INTO findings (id, scan_id, target_url, title, severity, cvss, confidence, status, affected_component, category, cwe, description, evidence_request, evidence_response, impact, remediation_title, remediation_steps_json, signature, cvss_vector, created_at)
+         VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, datetime('now'))`,
         [
           fId, scanId, normalized, f.title, f.severity, f.cvss, f.confidence, f.status,
           f.affectedComponent, f.category, f.cwe, f.description,
           f.evidence.request, f.evidence.response, f.impact,
           f.remediationTitle, JSON.stringify(f.remediationSteps), f.signature,
+          null, // le noyau de scan ne fournit pas (encore) de vecteur v3.1 — score du moteur conservé
         ]
       );
     }

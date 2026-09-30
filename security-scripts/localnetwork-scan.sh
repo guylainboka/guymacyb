@@ -12,7 +12,7 @@
 #   5. ARP cache read (/proc/net/arp) — MAC addresses for discovered IPs
 #   6. TCP connect probe on a small set of common ports per discovered host
 #
-# NO simulated data. If no interface / no hosts respond, an honest `error`
+# NO invented data. If no interface / no hosts respond, an honest `error`
 # field is returned with an empty `devices` array.
 #
 # Output: exactly one JSON object on stdout. Logs go to stderr.
@@ -417,7 +417,7 @@ if local_ip == "127.0.0.1":
         "durationMs": int((time.time() - START_TS) * 1000),
         "error": ("Aucune interface réseau non-loopback détectée. "
                   "Le scan réseau local nécessite une carte réseau connectée "
-                  "(Wi-Fi ou Ethernet). GuymaCyb ne génère jamais de données simulées."),
+                  "(Wi-Fi ou Ethernet). GuymaCyb ne génère jamais de données inventées."),
     }, ensure_ascii=False))
     sys.exit(0)
 
@@ -496,7 +496,7 @@ print(json.dumps({
     "error": None if devices_list else (
         "Aucun hôte découvert via mDNS/SSDP/NetBIOS/rDNS. Le réseau local est "
         "probablement silencieux, isolé, ou les protocoles de découverte sont "
-        "bloqués par le firewall du système hôte. GuymaCyb ne génère pas de données simulées."
+        "bloqués par le firewall du système hôte. GuymaCyb ne génère pas de données inventées."
     ),
 }, ensure_ascii=False))
 PY

@@ -456,6 +456,18 @@ export const SecurityLabView: React.FC<SecurityLabViewProps> = ({
                     </div>
                   </div>
 
+                  {currentResult.cvssVector && (
+                    <div className="bg-[#0a0e18] border border-[#24314c] rounded-lg p-3 flex flex-col gap-1.5 font-mono">
+                      <div className="flex items-center justify-between gap-2 flex-wrap">
+                        <span className="text-[11px] text-[#4cd7f6] font-bold">CVSS v3.1 — score CALCULÉ :</span>
+                        <strong className="text-sm text-[#dfe2f1]">
+                          {currentResult.cvssScore ?? '—'} / 10
+                        </strong>
+                      </div>
+                      <code className="text-[10px] text-[#c2c6d6] select-text break-all">{currentResult.cvssVector}</code>
+                    </div>
+                  )}
+
                   <div className="bg-[#0a0e18] border border-[#24314c] rounded-lg p-3 flex flex-col gap-1.5">
                     <span className="text-[11px] text-[#8c909f] font-bold">
                       Échange HTTP RÉEL capturé (requête envoyée → réponse de la cible) :

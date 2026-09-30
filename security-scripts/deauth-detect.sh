@@ -7,7 +7,7 @@
 # Strategy (in order, first one that works wins):
 #   1. `airodump-ng` (needs monitor mode + sudo) — captures real deauth frames
 #   2. `tshark` (needs monitor mode + sudo + pcap access)
-#   3. Aucun backend disponible — état honnête (PAS de données simulées) :
+#   3. Aucun backend disponible — état honnête (PAS de données inventées) :
 #      mode "monitor-mode-required" + events:[] + totalDeauths:0
 #
 # Detection logic:
@@ -224,7 +224,7 @@ else:
         mode = "tshark"
         monitor_mode = True
     else:
-        # 3. Aucun backend disponible — état honnête (PAS de données simulées).
+        # 3. Aucun backend disponible — état honnête (PAS de données inventées).
         events = []
         monitor_mode = False
         has_airodump = airodump_present()
@@ -235,19 +235,19 @@ else:
             error_msg = ("Détection de deauth indisponible : airodump-ng et tshark ne sont pas installés. "
                          "Installez via WSL (Windows) : apt install aircrack-ng tshark. "
                          "Ces outils analysent les trames 802.11 deauth/disassociation sur une interface en mode monitor. "
-                         "GuymaCyb ne génère jamais de données simulées.")
+                         "GuymaCyb ne génère jamais de données inventées.")
         elif not has_wifi:
             mode = "no-wireless-hardware"
             error_msg = ("Aucun adaptateur sans-fil détecté sur ce système. "
                          "La détection de deauth nécessite une clé WiFi physique en mode monitor + airodump-ng/tshark (root). "
                          "Sur Windows, ces outils tournent via WSL (wsl.exe -d Ubuntu -- airmon-ng start wlan0). "
-                         "GuymaCyb ne génère jamais de données simulées.")
+                         "GuymaCyb ne génère jamais de données inventées.")
         else:
             mode = "monitor-mode-required"
             error_msg = ("Aucune interface en mode monitor détectée. "
                          "Activez le mode monitor en root : airmon-ng start wlan0, puis relancez ce script sur l'interface générée (ex. wlan0mon). "
                          "Sans mode monitor, ni airodump-ng ni tshark ne peuvent capturer les trames deauth 802.11. "
-                         "GuymaCyb ne génère jamais de données simulées.")
+                         "GuymaCyb ne génère jamais de données inventées.")
 
 # No fake sleep — only sleep when real capture tools were running. The real
 # airodump-ng/tshark captures already take `duration` seconds; in the honest

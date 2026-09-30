@@ -7,7 +7,7 @@
 # Strategy (in order, first one that works wins):
 #   1. `iw dev <iface> scan` detailed (find AP by BSSID/SSID, parse RSN/WPA/HE)
 #   2. `wpa_supplicant` info (current association) — passive only
-#   3. Aucun backend disponible — état honnête (PAS de données simulées) :
+#   3. Aucun backend disponible — état honnête (PAS de données inventées) :
 #      mode "aircrack-ng-required" / "no-wireless-hardware" / "target-not-found"
 #
 # Computes:
@@ -312,25 +312,25 @@ else:
         mode = "wpa_supplicant"
 
 if ap is None:
-    # Aucun backend temps réel n'a produit de données — état honnête (PAS de simulation).
+    # Aucun backend temps réel n'a produit de données — état honnête (aucune donnée fabriquée).
     if not has_wireless_hardware():
         mode = "no-wireless-hardware"
         error_msg = ("Aucun adaptateur sans-fil détecté sur ce système. "
                      "L'audit WPA réel nécessite une clé WiFi physique compatible mode monitor + aircrack-ng. "
                      "Sur Windows, ces outils tournent via WSL (wsl.exe -d Ubuntu -- apt install aircrack-ng, puis airmon-ng start wlan0). "
-                     "GuymaCyb ne génère JAMAIS de données simulées.")
+                     "GuymaCyb ne génère JAMAIS de données inventées.")
     elif not aircrack_present():
         mode = "aircrack-ng-required"
         error_msg = ("Audit WPA réel indisponible : aircrack-ng n'est pas installé. "
                      "Installez via WSL (Windows) : apt install aircrack-ng, puis airmon-ng start wlan0. "
                      "L'audit nécessite une clé WiFi en mode monitor pour capturer les balises RSN/WPA réelles de l'AP cible. "
-                     "GuymaCyb ne génère jamais de données simulées.")
+                     "GuymaCyb ne génère jamais de données inventées.")
     else:
         mode = "target-not-found"
         error_msg = (f"Aucun AP correspondant à la cible '{target}' trouvé par iw/wpa_supplicant. "
                      "aircrack-ng est installé mais le mode monitor n'est probablement pas activé. "
                      "Exécutez en root : airmon-ng start wlan0, puis réessayez avec l'interface monitor (ex. wlan0mon). "
-                     "GuymaCyb ne génère jamais de données simulées.")
+                     "GuymaCyb ne génère jamais de données inventées.")
     # Champs vides/honnêtes : pas de fausse donnée.
     ap = {
         "bssid": target if is_bssid(target) else "",

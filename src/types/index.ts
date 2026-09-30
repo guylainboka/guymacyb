@@ -37,6 +37,12 @@ export interface LabAttackVector {
   owasp: string;
   cwe: string;
   severity: Severity;
+  /** Vecteur CVSS v3.1 officiel du vecteur d'attaque — le score est CALCULÉ (plus de bande théorique). */
+  cvssVector?: string;
+  /** Score calculé par le calculateur v3.1 côté serveur (renvoyé par /api/lab/vectors). */
+  cvssScore?: number;
+  cvssSeverity?: string;
+  cvssVectorNormalized?: string;
   difficulty: 'FAIBLE' | 'MOYEN' | 'ÉLEVÉ';
   description: string;
   safeTestPayload: string;
@@ -64,6 +70,9 @@ export interface LabProbeResult {
   probeSent: string;
   realResponse: string;
   observations: string[];
+  /** Vecteur CVSS v3.1 officiel du vecteur d'attaque + score CALCULÉ (calculateur FIRST). */
+  cvssVector?: string | null;
+  cvssScore?: number;
   findingCandidate?: Finding;
 }
 
@@ -117,6 +126,8 @@ export interface Finding {
   title: string;
   severity: Severity;
   cvss: number;
+  /** Vecteur CVSS v3.1 réel (AV/AC/PR/UI/S/C/I/A…) dont le score est dérivé — absent si le moteur source n'en fournit pas. */
+  cvssVector?: string | null;
   confidence: number;
   status: FindingStatus;
   affectedComponent: string;
@@ -216,7 +227,7 @@ export interface WifiNetwork {
 }
 
 export interface WifiScanResult {
-  tool: string;              // 'iwlist' | 'aircrack-ng' | 'builtin-simulated'
+  tool: string;              // 'iwlist' | 'aircrack-ng' | … (jamais un mode fabriqué)
   mode: string;
   interface: string;
   networks: WifiNetwork[];
@@ -304,6 +315,12 @@ export interface WifiLabVector {
   category: WifiAttackCategory;
   mitre: string;            // technique MITRE ATT&CK
   severity: Severity;
+  /** Vecteur CVSS v3.1 officiel de la technique — score calculé par le calculateur v3.1. */
+  cvssVector?: string;
+  /** Score calculé côté serveur (renvoyé par /api/wifi/lab/vectors). */
+  cvssScore?: number;
+  cvssSeverity?: string;
+  cvssVectorNormalized?: string;
   difficulty: 'FAIBLE' | 'MOYEN' | 'ÉLEVÉ';
   targetEncryption: WifiEncryption;
   description: string;

@@ -23,6 +23,7 @@ export const WIFI_LAB_VECTORS: WifiLabVector[] = [
     category: 'WIFI_DEAUTH',
     mitre: 'T1565.002 — Disk Wipe / Service Exhaustion (Wireless DoS)',
     severity: 'HIGH',
+    cvssVector: 'CVSS:3.1/AV:A/AC:L/PR:N/UI:N/S:U/C:N/I:L/A:H', // = 7.1 calculé
     difficulty: 'FAIBLE',
     targetEncryption: 'WPA2',
     description:
@@ -89,6 +90,7 @@ sae_require_mac=1`,
     category: 'WIFI_EVIL_TWIN',
     mitre: 'T1557.003 — Adversary-in-the-Middle: DHCP Spoofing / Rogue AP',
     severity: 'CRITICAL',
+    cvssVector: 'CVSS:3.1/AV:A/AC:L/PR:N/UI:N/S:C/C:H/I:H/A:H', // = 9.6 calculé (association transparente au SSID usurpé)
     difficulty: 'MOYEN',
     targetEncryption: 'OPEN',
     description:
@@ -158,6 +160,7 @@ private_key=/etc/hostapd/server.key
     category: 'WIFI_KRACK',
     mitre: 'T1578 — Modify Cloud Compute Infrastructure / Cryptographic Downgrade',
     severity: 'HIGH',
+    cvssVector: 'CVSS:3.1/AV:A/AC:H/PR:N/UI:N/S:C/C:H/I:H/A:N', // = 8.0 calculé
     difficulty: 'ÉLEVÉ',
     targetEncryption: 'WPA2',
     description:
@@ -227,6 +230,7 @@ network={
     category: 'WIFI_WPS',
     mitre: 'T1110 — Brute Force / Cryptographic Exhaustion',
     severity: 'HIGH',
+    cvssVector: 'CVSS:3.1/AV:A/AC:L/PR:N/UI:N/S:U/C:H/I:H/A:L', // = 8.3 calculé
     difficulty: 'FAIBLE',
     targetEncryption: 'WPA2',
     description:
@@ -298,6 +302,7 @@ wps_state=0          # WPS complètement désactivé
     category: 'WIFI_WPS',
     mitre: 'T1110.001 — Brute Force: Password Cracking',
     severity: 'MEDIUM',
+    cvssVector: 'CVSS:3.1/AV:A/AC:H/PR:N/UI:N/S:U/C:H/I:L/A:N', // = 5.9 calculé
     difficulty: 'FAIBLE',
     targetEncryption: 'WPA2',
     description:
@@ -371,6 +376,7 @@ wps_state=0              # désactivé totalement (recommandé)
     category: 'WIFI_HANDSHAKE',
     mitre: 'T1552.001 — Unsecured Credentials: Credentials in Files / Wireless',
     severity: 'HIGH',
+    cvssVector: 'CVSS:3.1/AV:A/AC:L/PR:N/UI:N/S:U/C:H/I:L/A:N', // = 7.1 calculé
     difficulty: 'MOYEN',
     targetEncryption: 'WPA2',
     description:
@@ -441,6 +447,7 @@ wpa_passphrase=Tr0ub4dor&3-Évitez-les-mots-du-dictionnaire!`,
     category: 'WIFI_HANDSHAKE',
     mitre: 'T1552.004 — Unsecured Credentials: Credentials in Network Traffic',
     severity: 'HIGH',
+    cvssVector: 'CVSS:3.1/AV:A/AC:L/PR:N/UI:N/S:U/C:H/I:L/A:N', // = 7.1 calculé (crackage hors ligne du PMK)
     difficulty: 'FAIBLE',
     targetEncryption: 'WPA2',
     description:
@@ -510,6 +517,7 @@ sae_pwe=2                            # Dragonfly hunting-and-pecking`,
     category: 'WIFI_DOWNGRADE',
     mitre: 'T1565.001 — Stored Data Manipulation / Protocol Downgrade',
     severity: 'MEDIUM',
+    cvssVector: 'CVSS:3.1/AV:A/AC:L/PR:N/UI:R/S:U/C:L/I:L/A:N', // = 4.6 calculé
     difficulty: 'MOYEN',
     targetEncryption: 'WPA2/WPA3',
     description:

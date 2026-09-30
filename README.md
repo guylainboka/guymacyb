@@ -189,17 +189,46 @@ Azure Trusted Signing / SignPath (gratuit OSS). Voir `desktop/signing/README.md`
 - Les scans de base (HTTP, ports, DNS, TLS, réseau local) fonctionnent **sans WSL**
   via les implémentations Node natives
 
+### ⚖️ Attestations légales (tous outils réels, y compris WiFi)
+
+Toute sonde réseau réelle — web **ou WiFi** — exige une **attestation légale** confirmée
+dans l'application, vérifiée **mot pour mot** côté serveur puis journalisée de façon
+immuable (SQLite `audit_logs`) :
+
+| Niveau | Outils concernés |
+|---|---|
+| **ACTIVE** | Sondes lab web (SQLi/XSS/SSRF/JWT/…), suite de tests actifs, mode monitor, capture de handshake, MAC changer |
+| **DESTRUCTIVE** | nikto complet (Safe Mode OFF), crack de handshake (force brute), attaque WPS (reaver), Evil Twin (hostapd + dnsmasq) |
+
+Auditer un système sans être propriétaire ou sans autorisation écrite du propriétaire
+est un **délit pénal** (Code pénal — atteintes aux STAD : jusqu'à 7 ans et 700 000 €
+d'amende). La source de vérité des niveaux exigés est servie par `GET /api/wifi/auth-requirements`
+et `/api/authorization/statements` — le serveur refuse tout appel non attesté (HTTP 403).
+
+### 📊 Scoring CVSS v3.1 vectoriel réel
+
+Le score de chaque vulnérabilité est **calculé** depuis son vecteur CVSS v3.1 officiel
+(AV/AC/PR/UI/S/C/I/A + métriques temporelles et environnementales) par `src/server/cvss31.ts`,
+conforme à la spécification FIRST (arrondi officiel inclus). La sévérité affichée est
+**dérivée du score calculé** — score et sévérité ne peuvent plus jamais diverger. Exemples
+validés contre la calculatrice NVD : `AV:N/AC:L/PR:N/UI:N/S:U/C:H/I:H/A:H` → 9.8 CRITICAL.
+
 ## 📁 Structure du projet
 
 ```
 ├── src/
-│   ├── app/                      # React app (Vite)
+│   ├── main.tsx                  # Point d'entrée React (Vite)
+│   ├── App.tsx                   # Application (routing par état, 18 vues)
 │   ├── components/
-│   │   ├── common/               # Header, Sidebar, Footer, modales
+│   │   ├── common/               # Header, Sidebar, Footer, modales (dont ActiveTestAuthModal)
 │   │   └── views/                # 18 vues de modules
-│   ├── server/                   # toolbridge.ts (pont WSL), scanner, db, securityLab
-│   └── data/                     # labAttackVectors, wifiLabVectors, courseNotions
-├── security-scripts/            # 18 scripts bash (outils Linux)
+│   ├── server/                   # toolbridge.ts (pont WSL), scanner, db (sql.js),
+│   │                             # securityLab.ts (sondes lab réelles), activeTests.ts,
+│   │                             # retest.ts, authorization.ts (attestations légales),
+│   │                             # cvss31.ts (calculateur CVSS v3.1 conforme FIRST)
+│   ├── data/                     # labAttackVectors, wifiLabVectors, courseNotions
+│   └── types/                    # Types TypeScript partagés frontend/backend
+├── security-scripts/            # 28 scripts bash (outils Linux réels, stdout = 1 JSON)
 │   └── lib/common.sh
 ├── shadowscan-core/             # Noyau Rust (optionnel)
 ├── desktop/
@@ -210,7 +239,7 @@ Azure Trusted Signing / SignPath (gratuit OSS). Voir `desktop/signing/README.md`
 │   ├── build-windows-exe.bat    # Pipeline build Windows
 │   ├── assets/icon.ico          # Icône Windows (256→16)
 │   └── signing/                 # Cert + scripts de signature
-├── server.ts                    # Express (30+ endpoints)
+├── server.ts                    # Express (45+ endpoints, loopback uniquement)
 ├── electron-builder.yml         # Config packaging NSIS
 └── .github/workflows/            # CI GitHub Actions
 ```

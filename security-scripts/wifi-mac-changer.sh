@@ -10,7 +10,7 @@
 # Strategy:
 #   1. macchanger (root) → changement réel
 #   2. ip link set address (root, fallback si macchanger absent) → changement réel
-#   3. Aucun backend disponible — état honnête (PAS de données simulées) :
+#   3. Aucun backend disponible — état honnête (PAS de données inventées) :
 #      method "failed" + changed:false / mode "root-required" / "linux-required"
 #
 # Sortie : un objet JSON unique sur stdout.
@@ -38,7 +38,7 @@ except Exception:
     result["method"] = "failed"
     result["error"] = (f"Interface {iface} introuvable sur ce système. "
                       "Le changement de MAC nécessite une interface réseau existante et un pilote qui supporte l'adressage arbitraire. "
-                      "GuymaCyb ne génère jamais de données simulées.")
+                      "GuymaCyb ne génère jamais de données inventées.")
     print(json.dumps(result, ensure_ascii=False)); sys.exit(0)
 
 # Générer MAC aléatoire localement administrée si non fournie (juste la valeur demandée)
@@ -53,12 +53,12 @@ is_linux = sys.platform == "linux"
 is_root = os.geteuid() == 0 if hasattr(os, "geteuid") else False
 has_macchanger = __import__("shutil").which("macchanger") is not None
 
-# État honnête : aucun backend temps réel disponible (PAS de données simulées).
+# État honnête : aucun backend temps réel disponible (PAS de données inventées).
 if not is_linux:
     result["method"] = "failed"
     result["error"] = ("Changement de MAC indisponible : Linux requis (WSL sur Windows). "
                       f"Lancez wsl.exe -d Ubuntu -u root -- bash security-scripts/wifi-mac-changer.sh {iface} {new_mac}. "
-                      "GuymaCyb ne génère jamais de données simulées.")
+                      "GuymaCyb ne génère jamais de données inventées.")
     print(json.dumps(result, ensure_ascii=False)); sys.exit(0)
 
 if not is_root:
@@ -67,7 +67,7 @@ if not is_root:
                       "`ip link set` et `macchanger` modifient l'interface réseau brute (CAP_NET_ADMIN). "
                       f"Relancez via : sudo bash security-scripts/wifi-mac-changer.sh {iface} {new_mac}, "
                       "ou sous WSL : wsl.exe -d Ubuntu -u root -- bash ... "
-                      "GuymaCyb ne génère jamais de données simulées.")
+                      "GuymaCyb ne génère jamais de données inventées.")
     print(json.dumps(result, ensure_ascii=False)); sys.exit(0)
 
 # Changement réel

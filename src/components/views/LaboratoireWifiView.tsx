@@ -1,5 +1,6 @@
 import React, { useState, useEffect } from 'react';
-import { WifiLabVector, WifiAttackCategory } from '../../types';
+import { WifiLabVector, WifiAttackCategory, TargetConfig } from '../../types';
+import { ActiveTestAuthModal } from '../common/ActiveTestAuthModal';
 
 interface LaboratoireWifiViewProps {
   onGoToCours: () => void;
@@ -16,25 +17,41 @@ const CATEGORY_LABEL: Record<string, { label: string; icon: string; color: strin
 
 /**
  * Procédures RÉELLES : chaque vecteur est relié à l'outil WiFi réel du
- * backend (/api/wifi/* — aircrack-ng suite, iw, reaver… via WSL). Sans
- * matériel radio réel, les outils renvoient des erreurs honnêtes
+ * backend (/api/wifi/* — aircrack-ng suite, iw, reaver, hostapd… via WSL).
+ * Sans matériel radio réel, les outils renvoient des erreurs honnêtes
  * (mode: no-wireless-hardware) — aucune donnée WiFi n'est fabriquée.
+ *
+ * authLevel = niveau d'ATTESTATION LÉGALE exigé avant l'appel (source de
+ * vérité serveur : GET /api/wifi/auth-requirements) — null = outil passif
+ * de détection/audit, sans attestation obligatoire.
  */
 interface RealProcedure {
   endpoint: string;
   note: string;
+  authLevel: 'ACTIVE' | 'DESTRUCTIVE' | null;
   params: { key: string; label: string; placeholder: string }[];
 }
 const REAL_PROCEDURES: Record<string, RealProcedure | null> = {
   'wifi-deauth-flood': {
     endpoint: '/api/wifi/deauth-detect',
     note: 'Détection IDS réelle des trames de désauthentification sur votre interface monitor (sur votre propre réseau autorisé).',
+    authLevel: null,
     params: [{ key: 'iface', label: 'Interface monitor', placeholder: 'wlan0mon' }],
   },
-  'wifi-evil-twin': null,
+  'wifi-evil-twin': {
+    endpoint: '/api/wifi/evil-twin',
+    note: 'Evil Twin RÉEL (hostapd + dnsmasq) : un vrai point d\'accès usurpé émet votre SSID et un vrai DHCP répond aux clients associés. ATTESTATION DESTRUCTIVE OBLIGATOIRE — n\'usurpez QUE le SSID de VOTRE propre réseau de test.',
+    authLevel: 'DESTRUCTIVE',
+    params: [
+      { key: 'ssid', label: 'SSID à usurper (réseau autorisé)', placeholder: 'MonReseau-Test' },
+      { key: 'channel', label: 'Canal', placeholder: '6' },
+      { key: 'iface', label: 'Interface monitor', placeholder: 'wlan0mon' },
+    ],
+  },
   'wifi-krack': {
     endpoint: '/api/wifi/wpa-audit',
     note: 'Audit WPA réel de la cible (versions supportées, PMF) — la vulnérabilité KRACK dépend des correctifs du client.',
+    authLevel: null,
     params: [
       { key: 'target', label: 'ESSID cible', placeholder: 'MonReseau' },
       { key: 'iface', label: 'Interface', placeholder: 'wlan0mon' },
@@ -43,6 +60,7 @@ const REAL_PROCEDURES: Record<string, RealProcedure | null> = {
   'wifi-wps-pixie': {
     endpoint: '/api/wifi/wps-attack',
     note: 'Attaque WPS Pixie Dust réelle (reaver) — UNIQUEMENT sur votre propre point d\'accès autorisé.',
+    authLevel: 'DESTRUCTIVE',
     params: [
       { key: 'bssid', label: 'BSSID cible', placeholder: 'AA:BB:CC:DD:EE:FF' },
       { key: 'iface', label: 'Interface monitor', placeholder: 'wlan0mon' },
@@ -51,6 +69,7 @@ const REAL_PROCEDURES: Record<string, RealProcedure | null> = {
   'wifi-wps-brute': {
     endpoint: '/api/wifi/wps-attack',
     note: 'Attaque WPS PIN réelle (reaver) — UNIQUEMENT sur votre propre point d\'accès autorisé.',
+    authLevel: 'DESTRUCTIVE',
     params: [
       { key: 'bssid', label: 'BSSID cible', placeholder: 'AA:BB:CC:DD:EE:FF' },
       { key: 'iface', label: 'Interface monitor', placeholder: 'wlan0mon' },
@@ -59,6 +78,7 @@ const REAL_PROCEDURES: Record<string, RealProcedure | null> = {
   'wifi-pmkid-capture': {
     endpoint: '/api/wifi/handshake-capture',
     note: 'Capture réelle (airodump-ng) du 4-way handshake / PMKID sur le réseau autorisé.',
+    authLevel: 'ACTIVE',
     params: [
       { key: 'bssid', label: 'BSSID cible', placeholder: 'AA:BB:CC:DD:EE:FF' },
       { key: 'channel', label: 'Canal', placeholder: '6' },
@@ -68,6 +88,7 @@ const REAL_PROCEDURES: Record<string, RealProcedure | null> = {
   'wifi-handshake-capture': {
     endpoint: '/api/wifi/handshake-capture',
     note: 'Capture réelle (airodump-ng) du 4-way handshake sur le réseau autorisé.',
+    authLevel: 'ACTIVE',
     params: [
       { key: 'bssid', label: 'BSSID cible', placeholder: 'AA:BB:CC:DD:EE:FF' },
       { key: 'channel', label: 'Canal', placeholder: '6' },
@@ -77,6 +98,7 @@ const REAL_PROCEDURES: Record<string, RealProcedure | null> = {
   'wifi-downgrade-wpa3': {
     endpoint: '/api/wifi/wpa-audit',
     note: 'Audit WPA réel : vérifie les mécanismes de transition WPA3/WPA2 et PMF (protection contre le downgrade).',
+    authLevel: null,
     params: [
       { key: 'target', label: 'ESSID cible', placeholder: 'MonReseau' },
       { key: 'iface', label: 'Interface', placeholder: 'wlan0mon' },
@@ -96,6 +118,8 @@ export const LaboratoireWifiView: React.FC<LaboratoireWifiViewProps> = ({
   const [realResult, setRealResult] = useState<any | null>(null);
   const [paramValues, setParamValues] = useState<Record<string, string>>({});
   const [toast, setToast] = useState<string | null>(null);
+  // Autorisation légale : procédure en attente de confirmation d'attestation
+  const [pendingAuth, setPendingAuth] = useState<{ procedure: RealProcedure; level: 'ACTIVE' | 'DESTRUCTIVE' } | null>(null);
 
   useEffect(() => {
     let cancelled = false;
@@ -122,19 +146,31 @@ export const LaboratoireWifiView: React.FC<LaboratoireWifiViewProps> = ({
 
   const filtered = vectors.filter((v) => filter === 'ALL' || v.category === filter);
 
-  const runRealProcedure = async () => {
+  /** Exécution réseau réelle — appelée APRÈS confirmation d'attestation si requise. */
+  const executeProcedure = async (procedure: RealProcedure, level: 'ACTIVE' | 'DESTRUCTIVE', statement: string, confirmedAt: string) => {
     if (!selected) return;
-    const procedure = REAL_PROCEDURES[selected.id];
-    if (!procedure) {
-      showToast('Aucune procédure automatisée pour ce vecteur — suivez la procédure manuelle de la fiche.');
-      return;
-    }
     setIsRunning(true);
     setRealResult(null);
     try {
-      const body: Record<string, string> = {};
+      const body: Record<string, unknown> = {};
       for (const p of procedure.params) {
-        if (paramValues[p.key]) body[p.key] = paramValues[p.key];
+        if (paramValues[p.key] !== undefined && paramValues[p.key] !== '') body[p.key] = paramValues[p.key];
+      }
+      // Clés normalisées attendues par le backend selon l'outil
+      if (procedure.endpoint === '/api/wifi/deauth-detect') body.interface = body.iface;
+      if (procedure.endpoint === '/api/wifi/wpa-audit') body.interface = body.iface;
+      if (procedure.endpoint === '/api/wifi/handshake-capture') body.interface = body.iface;
+      if (procedure.endpoint === '/api/wifi/evil-twin') body.interface = body.iface;
+      if (procedure.endpoint === '/api/wifi/wps-attack') body.interface = body.iface;
+      if (procedure.authLevel) {
+        const target = String(body.bssid || body.ssid || body.target || body.iface || 'cible-wifi');
+        body.authorization = {
+          operatorId: 'SEC-OPS-0982',
+          targetUrl: target,
+          level,
+          statement,
+          confirmedAt,
+        };
       }
       const res = await fetch(procedure.endpoint, {
         method: 'POST',
@@ -143,11 +179,13 @@ export const LaboratoireWifiView: React.FC<LaboratoireWifiViewProps> = ({
       });
       const data = await res.json().catch(() => ({ error: 'Réponse illisible du backend' }));
       setRealResult(data);
-      if (!res.ok || data?.error || data?.mode === 'no-wireless-hardware') {
+      if (res.status === 403 && data?.attestationRequired) {
+        showToast('Attestation rejetée par le serveur : rechargez la modale d\'autorisation et confirmez la déclaration exacte.');
+      } else if (!res.ok || data?.error || data?.mode === 'no-wireless-hardware') {
         showToast(
           data?.mode === 'no-wireless-hardware'
             ? 'Matériel radio absent : branchez une clé WiFi mode monitor (AR9271 / 88XXAU) pour exécuter réellement cette procédure.'
-            : `Outil réel terminé avec erreur : ${data?.error || `HTTP ${res.status}`}`
+            : `Outil réel terminé avec erreur : ${data?.error || data?.mode || `HTTP ${res.status}`}`
         );
       } else {
         showToast('Procédure réelle exécutée — résultat brut de l\'outil affiché ci-dessous.');
@@ -157,6 +195,32 @@ export const LaboratoireWifiView: React.FC<LaboratoireWifiViewProps> = ({
     } finally {
       setIsRunning(false);
     }
+  };
+
+  const runRealProcedure = () => {
+    if (!selected) return;
+    const procedure = REAL_PROCEDURES[selected.id];
+    if (!procedure) {
+      showToast('Aucune procédure automatisée pour ce vecteur — suivez la procédure manuelle de la fiche.');
+      return;
+    }
+    // Garde-fou légal : attestation obligatoire AVANT tout outil agressif.
+    if (procedure.authLevel) {
+      setPendingAuth({ procedure, level: procedure.authLevel });
+      return;
+    }
+    void executeProcedure(procedure, 'ACTIVE', '', '');
+  };
+
+  const wifiTargetConfig: TargetConfig = {
+    url: String(
+      paramValues.bssid || paramValues.ssid || paramValues.target || paramValues.iface || 'cible-wifi'
+    ),
+    port: 0,
+    scope: 'strict',
+    authorized: false,
+    operatorId: 'SEC-OPS-0982',
+    localDbName: 'guymacyb',
   };
 
   if (loading) {
@@ -174,6 +238,17 @@ export const LaboratoireWifiView: React.FC<LaboratoireWifiViewProps> = ({
 
   return (
     <div className="h-full overflow-y-auto bg-[#0a0e18] text-[#dfe2f1] p-6">
+      {/* Modale d'autorisation légale — obligatoire avant tout outil agressif */}
+      <ActiveTestAuthModal
+        isOpen={pendingAuth !== null}
+        onClose={() => setPendingAuth(null)}
+        targetConfig={wifiTargetConfig}
+        onConfirm={(level, statement, confirmedAt) => {
+          const pending = pendingAuth;
+          setPendingAuth(null);
+          if (pending) void executeProcedure(pending.procedure, level, statement, confirmedAt);
+        }}
+      />
       {toast && (
         <div className="fixed top-24 right-6 z-50 px-4 py-2 bg-[#171b26] border border-[#4cd7f6]/50 rounded text-sm text-[#dfe2f1] shadow-lg backdrop-blur max-w-md">
           {toast}
@@ -312,6 +387,26 @@ export const LaboratoireWifiView: React.FC<LaboratoireWifiViewProps> = ({
                 <div className="flex-1 overflow-y-auto p-4 flex flex-col gap-3 text-xs">
                   {activeTab === 'fiche' && (
                     <>
+                      {selected.cvssVector && (
+                        <div className="bg-[#0a0e18] border border-[#24314c] rounded p-3 font-mono">
+                          <div className="flex items-center justify-between gap-2 flex-wrap">
+                            <span className="text-[11px] text-[#4cd7f6] font-bold">CVSS v3.1 — score CALCULÉ du vecteur :</span>
+                            <span className={`px-2 py-0.5 rounded text-[10px] font-bold border ${
+                              (selected.cvssSeverity ?? '') === 'CRITICAL'
+                                ? 'bg-[#93000a]/30 border-[#ffb4ab]/50 text-[#ffb4ab]'
+                                : (selected.cvssSeverity ?? '') === 'HIGH'
+                                  ? 'bg-orange-500/15 border-orange-500/40 text-orange-400'
+                                  : 'bg-amber-500/10 border-amber-500/40 text-amber-400'
+                            }`}>
+                              {selected.cvssScore ?? '—'} {(selected.cvssSeverity ?? '').toUpperCase()}
+                            </span>
+                          </div>
+                          <code className="block mt-2 text-[10px] text-[#c2c6d6] select-text break-all">{selected.cvssVectorNormalized || selected.cvssVector}</code>
+                          <p className="mt-1.5 text-[9px] text-[#8c909f] leading-relaxed">
+                            Score dérivé des métriques AV/AC/PR/UI/S/C/I/A par le calculateur v3.1 conforme FIRST (base, temporel, environnemental) — jamais d'une bande de sévérité.
+                          </p>
+                        </div>
+                      )}
                       <div className="bg-[#0a0e18] border border-[#24314c] rounded p-3">
                         <span className="text-[11px] text-[#4cd7f6] font-bold font-mono">Principe :</span>
                         <p className="text-[#c2c6d6] mt-1 leading-relaxed">{selected.description}</p>
@@ -337,6 +432,12 @@ export const LaboratoireWifiView: React.FC<LaboratoireWifiViewProps> = ({
                             <span className="text-[11px] text-[#ffb4ab] font-bold font-mono">Procédure réelle — outil backend :</span>
                             <p className="mt-1">{selectedProcedure.note}</p>
                             <code className="block mt-2 text-[10px] text-[#4cd7f6]">{selectedProcedure.endpoint}</code>
+                            {selectedProcedure.authLevel && (
+                              <div className="mt-2 inline-flex items-center gap-1.5 px-2 py-1 rounded bg-[#93000a]/20 border border-[#ffb4ab]/40 text-[10px] text-[#ffb4ab] font-bold font-mono">
+                                <span className="material-symbols-outlined text-[13px]">gavel</span>
+                                ATTESTATION {selectedProcedure.authLevel === 'DESTRUCTIVE' ? 'AGRESSIVE (DESTRUCTIVE)' : 'ACTIVE'} OBLIGATOIRE
+                              </div>
+                            )}
                           </div>
                           <div className="grid grid-cols-1 md:grid-cols-2 gap-2">
                             {selectedProcedure.params.map((p) => (
@@ -356,12 +457,22 @@ export const LaboratoireWifiView: React.FC<LaboratoireWifiViewProps> = ({
                             type="button"
                             onClick={runRealProcedure}
                             disabled={isRunning}
-                            className="self-start px-4 py-2 rounded bg-rose-600 hover:bg-rose-500 text-white font-bold flex items-center gap-2 disabled:opacity-50 transition-colors"
+                            className={`self-start px-4 py-2 rounded text-white font-bold flex items-center gap-2 disabled:opacity-50 transition-colors ${
+                              selectedProcedure.authLevel === 'DESTRUCTIVE'
+                                ? 'bg-[#93000a] hover:bg-[#ff5449]'
+                                : selectedProcedure.authLevel === 'ACTIVE'
+                                  ? 'bg-amber-600 hover:bg-amber-500'
+                                  : 'bg-rose-600 hover:bg-rose-500'
+                            }`}
                           >
                             <span className={`material-symbols-outlined text-[16px] ${isRunning ? 'animate-spin' : ''}`}>
-                              {isRunning ? 'progress_activity' : 'play_circle'}
+                              {isRunning ? 'progress_activity' : selectedProcedure.authLevel ? 'gavel' : 'play_circle'}
                             </span>
-                            {isRunning ? 'Outil réel en cours…' : 'Exécuter la procédure réelle'}
+                            {isRunning
+                              ? 'Outil réel en cours…'
+                              : selectedProcedure.authLevel
+                                ? 'Autoriser puis exécuter (attestation obligatoire)'
+                                : 'Exécuter la procédure réelle'}
                           </button>
                           {realResult !== null && (
                             <div className="bg-[#0a0e18] border border-[#24314c] rounded p-3">

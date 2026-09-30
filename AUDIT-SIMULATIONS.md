@@ -1,5 +1,22 @@
 # Audit des Simulations — Guyma Cyb
 
+> **STATUT : RÉSOLU ✅ (Phases 1 → 3 terminées)**
+>
+> - **Phase 1** (commit `71821aa`) : les 9 derniers résidus corrigés — télémétrie
+>   réelle (Footer, ScannerRecon, AnalyseWeb), IDs séquentiels, durées mesurées,
+>   CVSS unifiés.
+> - **Phase 2** (commit `570e084`) : le laboratoire et les tests actifs sont des
+>   moteurs 100 % réels (vraies requêtes réseau, vrais verdicts, vraies preuves)
+>   encadrés par le modèle d'attestation légale `authorization.ts`.
+> - **Phase 3** : attestations étendues à TOUS les outils WiFi réels (monitor,
+>   handshake, crack, WPS, MAC, Evil Twin), calculateur **CVSS v3.1 vectoriel
+>   conforme FIRST** (`src/server/cvss31.ts`) — la sévérité est dérivée du score
+>   calculé —, endpoint `/api/lab/history`, purge finale du vocabulaire
+>   « simulation » et retrait du dossier `skills/` (artefacts de dev).
+>
+> Le reste de ce document est conservé comme **archive historique** de l'audit
+> initial (inventaire daté, lu en lecture seule).
+
 > Audit exhaustif en lecture seule effectué par l'agent `AUDIT-1` (Explore).
 > Aucun code source n'a été modifié — ce document est un inventaire de toutes
 > les simulations / données fictives / faux succès identifiés dans le logiciel.

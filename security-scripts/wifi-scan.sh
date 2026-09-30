@@ -9,10 +9,10 @@
 #   2. `iwlist <iface> scan`        (wireless-tools legacy)
 #   3. `aircrack-ng` (airmon-ng + airodump-ng)  — NOT typically available here
 #
-# Doctrine « zéro simulation » : si aucun matériel WiFi n'est disponible, le
+# Doctrine « zéro invention » : si aucun matériel WiFi n'est disponible, le
 # script retourne honnêtement {mode: "no-wireless-hardware", error: ...} —
-# AUCUNE donnée simulée n'est générée (l'ancien mode « builtin-simulated »
-# qui produisait de faux SSIDs français a été supprimé).
+# AUCUN réseau n'est fabriqué (l'ancien mode builtin qui produisait de faux
+# SSIDs français a été supprimé).
 #
 # Output: a single JSON object on stdout (logs on stderr).
 set -euo pipefail
@@ -326,7 +326,7 @@ def parse_iwlist(text):
     return nets
 
 # ============================================================
-#  Fonction builtin_networks() SUPPRIMÉE — doctrine « zéro simulation »
+#  Fonction builtin_networks() SUPPRIMÉE — doctrine « zéro invention »
 #  (l'ancien code retournait 8 faux SSIDs français FreeWifi/Livebox/Bbox…
 #  jamais appelée en pratique, mais source de confusion. Le script retourne
 #  désormais honnêtement {mode: "no-wireless-hardware"} si pas de matériel.)
@@ -383,12 +383,12 @@ if not networks:
         aircrack_present = False
     if aircrack_present:
         # We don't try to actually run airodump-ng (would need monitor mode + sudo).
-        # Doctrine « zéro simulation » : on NE génère pas de données simulées.
+        # Doctrine « zéro invention » : on NE fabrique aucune donnée.
         # Si aucun matériel/outils ne fonctionne, on tombe sur l'état honnête
         # {mode: "no-wireless-hardware"} ci-dessous.
         pass
 
-# 4. Aucun hardware/outil — état honnête (PAS de données simulées)
+# 4. Aucun hardware/outil — état honnête (PAS de données inventées)
 if not networks:
     # Vérifier s'il existe une interface sans-fil réelle
     has_wifi = False
@@ -410,7 +410,7 @@ if not networks:
         error_msg = ("Aucun adaptateur sans-fil détecté sur ce système. "
                      "Le scan WiFi temps réel nécessite une carte WiFi physique + iw/aircrack-ng. "
                      "Sur Windows, ces outils tournent via WSL (wsl.exe -d Ubuntu -- airodump-ng). "
-                     "GuymaCyb ne génère JAMAIS de données simulées — branchez une clé WiFi USB compatible mode monitor.")
+                     "GuymaCyb ne génère JAMAIS de données inventées — branchez une clé WiFi USB compatible mode monitor.")
 
 summary = summarize(networks)
 duration_ms = int((time.time() - start) * 1000)

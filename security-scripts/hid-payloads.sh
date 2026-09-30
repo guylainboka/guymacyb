@@ -11,7 +11,7 @@
 #   DuckyScript is the Hak5 Rubber Ducky language (STRING, DELAY, GUI,
 #   ENTER, etc.) — usable on Rubber Ducky, Flipper Zero BadUSB, or any
 #   Linux configfs HID gadget (e.g. via usb-arsenal.sh apply hid-keyboard).
-#   These are GENUINE payloads — no fake data, no simulation.
+#   These are GENUINE payloads — no fake data, nothing invented.
 #
 # Output: exactly one JSON object on stdout. Logs go to stderr.
 set -euo pipefail
@@ -120,7 +120,7 @@ PAYLOADS = {
             "risque USB inconnu)."
         ),
         "payload": (
-            "REM === GuymaCyb HID — Ransomware SIMULATION (benign) ===\n"
+            "REM === GuymaCyb HID — Ransomware DEMONSTRATION (benign) ===\n"
             "REM Aucune encryption. Affiche uniquement une note.\n"
             "DEFAULT_DELAY 200\n"
             "DELAY 500\n"
@@ -144,7 +144,7 @@ PAYLOADS = {
             "STRING %USERPROFILE%\\Desktop\\README_DEMO.txt\n"
             "DELAY 100\n"
             "ENTER\n"
-            "REM End of benign simulation payload.\n"
+            "REM End of benign demonstration payload.\n"
         ),
     },
     "privilege_escalation": {

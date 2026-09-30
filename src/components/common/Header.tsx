@@ -26,7 +26,7 @@ export const Header: React.FC<HeaderProps> = ({
   // VRAIE télémétrie moteur : on interroge le backend (/api/core/status +
   // /api/health) toutes les 5s pour afficher la mémoire heap réelle et le
   // nombre de threads/cœurs réellement disponibles. Doctrine « zéro
-  // simulation » : l'ancien code générait cpuUsage/ramUsage aléatoirement
+  // invention » : l'ancien code générait cpuUsage/ramUsage aléatoirement
   // (Math.random) « to feel like a real native engine » — c'était un mensonge.
   const [ramUsage, setRamUsage] = useState<number | null>(null);
   const [threadsCount, setThreadsCount] = useState<number | null>(null);

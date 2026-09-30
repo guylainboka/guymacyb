@@ -8,7 +8,7 @@
 #
 # Strategy:
 #   1. airodump-ng (root + monitor mode) → capture réelle + vérification aircrack-ng
-#   2. Aucun backend disponible — état honnête (PAS de données simulées) :
+#   2. Aucun backend disponible — état honnête (PAS de données inventées) :
 #      captured:false + mode "airodump-ng-required" / "root-required" / "no-wireless-hardware"
 #
 # Sortie : un objet JSON unique sur stdout.
@@ -49,12 +49,12 @@ def has_wireless_hardware():
         pass
     return False
 
-# État honnête : aucun backend temps réel disponible (PAS de données simulées).
+# État honnête : aucun backend temps réel disponible (PAS de données inventées).
 if sys.platform != "linux":
     result["mode"] = "linux-required"
     result["error"] = ("La capture de handshake nécessite Linux (WSL sur Windows). "
                       "Lancez wsl.exe -d Ubuntu -- bash security-scripts/wifi-handshake-capture.sh <bssid> <ch> <iface> <dur>. "
-                      "GuymaCyb ne génère jamais de données simulées.")
+                      "GuymaCyb ne génère jamais de données inventées.")
     print(json.dumps(result, ensure_ascii=False)); sys.exit(0)
 
 if not has_wireless_hardware():
@@ -62,7 +62,7 @@ if not has_wireless_hardware():
     result["error"] = ("Aucun adaptateur sans-fil détecté sur ce système. "
                       "La capture d'un 4-way handshake nécessite une clé WiFi physique compatible mode monitor + airodump-ng (root). "
                       "Sur Windows, ces outils tournent via WSL (wsl.exe -d Ubuntu -- airmon-ng start wlan0). "
-                      "GuymaCyb ne génère jamais de données simulées.")
+                      "GuymaCyb ne génère jamais de données inventées.")
     print(json.dumps(result, ensure_ascii=False)); sys.exit(0)
 
 if not has_airodump:
@@ -70,7 +70,7 @@ if not has_airodump:
     result["error"] = ("Capture indisponible : airodump-ng n'est pas installé. "
                       "Installez via WSL (Windows) : apt install aircrack-ng, puis airmon-ng start wlan0. "
                       "airodump-ng capture les trames EAPOL du 4-way handshake sur l'interface monitor. "
-                      "GuymaCyb ne génère jamais de données simulées.")
+                      "GuymaCyb ne génère jamais de données inventées.")
     print(json.dumps(result, ensure_ascii=False)); sys.exit(0)
 
 if not is_root:
@@ -79,7 +79,7 @@ if not is_root:
                       "Le mode monitor (airmon-ng) et airodump-ng nécessitent les droits d'accès à l'interface réseau brute. "
                       "Relancez via : sudo bash security-scripts/wifi-handshake-capture.sh <bssid> <ch> <iface> <dur>, "
                       "ou sous WSL : wsl.exe -d Ubuntu -u root -- bash ... "
-                      "GuymaCyb ne génère jamais de données simulées.")
+                      "GuymaCyb ne génère jamais de données inventées.")
     print(json.dumps(result, ensure_ascii=False)); sys.exit(0)
 
 # Capture réelle

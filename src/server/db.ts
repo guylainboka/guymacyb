@@ -120,6 +120,7 @@ function initTables(db: Database) {
       remediation_title TEXT NOT NULL,
       remediation_steps_json TEXT NOT NULL,
       signature TEXT NOT NULL,
+      cvss_vector TEXT,
       created_at TEXT NOT NULL
     );
 
@@ -131,6 +132,15 @@ function initTables(db: Database) {
       operator_id TEXT NOT NULL
     );
   `);
+
+  // Migration légère pour les bases existantes créées avant la Phase 3 :
+  // la colonne cvss_vector (vecteur CVSS v3.1 réel du finding) est ajoutée
+  // si absente. sql.js ne connaît pas « ADD COLUMN IF NOT EXISTS ».
+  try {
+    db.run(`ALTER TABLE findings ADD COLUMN cvss_vector TEXT`);
+  } catch {
+    // Colonne déjà présente (base neuve ou migration déjà appliquée)
+  }
 
   // Doctrine « zéro invention » : on ne peuple PLUS la base avec des cibles
   // fictives au premier lancement. L'utilisateur démarre avec une base vide

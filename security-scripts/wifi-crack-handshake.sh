@@ -5,7 +5,7 @@
 #
 # Strategy:
 #   1. aircrack-ng + wordlist fournie ou découverte sur /usr/share/wordlists → cassage réel
-#   2. Aucun backend disponible — état honnête (PAS de données simulées) :
+#   2. Aucun backend disponible — état honnête (PAS de données inventées) :
 #      cracked:false + mode "aircrack-ng-required" / "cap-file-missing" / "wordlist-missing"
 #
 # Sortie : un objet JSON unique sur stdout.
@@ -34,7 +34,7 @@ if not os.path.exists(cap):
     result["error"] = (f"Fichier de capture introuvable : {cap}. "
                       "Le cassage hors-ligne nécessite un fichier .cap contenant un vrai 4-way handshake capturé "
                       "(via wifi-handshake-capture.sh avec airodump-ng en mode monitor). "
-                      "GuymaCyb ne génère jamais de données simulées.")
+                      "GuymaCyb ne génère jamais de données inventées.")
     print(json.dumps(result, ensure_ascii=False)); sys.exit(0)
 
 if not has_aircrack:
@@ -42,7 +42,7 @@ if not has_aircrack:
     result["error"] = ("Cassage indisponible : aircrack-ng n'est pas installé. "
                       "Installez via WSL (Windows) : apt install aircrack-ng. "
                       "Le cassage réel combine aircrack-ng + une capture .cap valide + une wordlist (ex. rockyou.txt). "
-                      "GuymaCyb ne génère jamais de données simulées.")
+                      "GuymaCyb ne génère jamais de données inventées.")
     print(json.dumps(result, ensure_ascii=False)); sys.exit(0)
 
 # Trouver une wordlist réelle sur le système (aucune wordlist démo n'est générée).
@@ -60,7 +60,7 @@ if not wl or not os.path.exists(wl):
                       "Fournissez une wordlist en 2e argument (ex. /usr/share/wordlists/rockyou.txt), "
                       "ou installez-en une : apt install wordlists / seclists. "
                       "Le cassage réel aircrack-ng fait correspondre chaque mot de la wordlist aux EAPOL capturés. "
-                      "GuymaCyb ne génère jamais de données simulées.")
+                      "GuymaCyb ne génère jamais de données inventées.")
     print(json.dumps(result, ensure_ascii=False)); sys.exit(0)
 
 # Cassage réel avec aircrack-ng
