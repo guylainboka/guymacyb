@@ -29,6 +29,22 @@ export const ScannerReconView: React.FC<ScannerReconViewProps> = ({
   const [reconReport, setReconReport] = useState<any | null>(null);
   const [isReconRunning, setIsReconRunning] = useState<boolean>(false);
 
+  // ── Doctrine « zéro simulation » : les 4 cartes métriques du Quick Metrics
+  // Deck ci-dessous ne reflètent que des données RÉELLES — le rapport de
+  // reconnaissance effectivement exécuté (sondes DNS/TCP/HTTP réelles de
+  // /api/recon/advanced-suite) et la base SQLite locale.
+  // L'ancien code affichait en dur « 137 URIs / 42 Routes API / 1 842 CVE /
+  // Grade A+ TLS 1.3 / 8.4k req/min » avant même tout scan — interdit.
+  const reconDone = reconReport !== null && !reconReport.error;
+  const portAudit: { port: number; status: string; service: string }[] = reconDone
+    ? reconReport.portAudit || []
+    : [];
+  const openPortsCount = portAudit.filter((p) => p.status === 'OPEN').length;
+  const missingHeadersCount: number | null = reconDone
+    ? (reconReport.missingSecurityHeaders || []).length
+    : null;
+  const probeHttpStatus: number | null = reconDone ? reconReport.httpStatus ?? null : null;
+
   const handleRunReconSuite = async () => {
     setIsReconRunning(true);
     try {
@@ -375,42 +391,81 @@ export const ScannerReconView: React.FC<ScannerReconViewProps> = ({
         )}
       </div>
 
-      {/* Quick Metrics Deck */}
+      {/* Quick Metrics Deck — compteurs RÉELS uniquement (voir commentaire doctrine ci-dessus) */}
       <div className="grid grid-cols-2 md:grid-cols-4 gap-4">
         <div className="bg-[#171b26] border border-[#24314c] rounded p-4 flex flex-col">
           <div className="flex items-center justify-between text-[#8c909f] font-mono text-xs">
             <span>Recon Surface</span>
             <span className="material-symbols-outlined text-[16px] text-[#4cd7f6]">polyline</span>
           </div>
-          <span className="text-2xl font-bold font-mono text-[#dfe2f1] mt-2">137 URIs</span>
-          <span className="text-[11px] font-mono text-[#10b981] mt-1">42 Routes API qualifiées</span>
+          {reconDone ? (
+            <>
+              <span className="text-2xl font-bold font-mono text-[#dfe2f1] mt-2">
+                {openPortsCount}/{portAudit.length}
+              </span>
+              <span className="text-[11px] font-mono text-[#10b981] mt-1">Ports ouverts (sondes TCP réelles)</span>
+            </>
+          ) : (
+            <>
+              <span className="text-2xl font-bold font-mono text-[#8c909f] mt-2">—</span>
+              <span className="text-[11px] font-mono text-[#8c909f] mt-1">Aucune sonde exécutée</span>
+            </>
+          )}
         </div>
 
         <div className="bg-[#171b26] border border-[#24314c] rounded p-4 flex flex-col">
           <div className="flex items-center justify-between text-[#8c909f] font-mono text-xs">
-            <span>Signatures CVE</span>
-            <span className="material-symbols-outlined text-[16px] text-[#3b82f6]">shield</span>
+            <span>Cibles en base</span>
+            <span className="material-symbols-outlined text-[16px] text-[#3b82f6]">storage</span>
           </div>
-          <span className="text-2xl font-bold font-mono text-[#dfe2f1] mt-2">1,842</span>
-          <span className="text-[11px] font-mono text-[#8c909f] mt-1">Base locale SQLite à jour</span>
+          <span className="text-2xl font-bold font-mono text-[#dfe2f1] mt-2">{historicalTargets.length}</span>
+          <span className="text-[11px] font-mono text-[#8c909f] mt-1">Comptage réel (base SQLite)</span>
         </div>
 
         <div className="bg-[#171b26] border border-[#24314c] rounded p-4 flex flex-col">
           <div className="flex items-center justify-between text-[#8c909f] font-mono text-xs">
-            <span>Audit SSL/TLS</span>
-            <span className="material-symbols-outlined text-[16px] text-[#10b981]">verified</span>
+            <span>Durcissement HTTP</span>
+            <span className="material-symbols-outlined text-[16px] text-[#10b981]">policy</span>
           </div>
-          <span className="text-2xl font-bold font-mono text-[#10b981] mt-2">Grade A+</span>
-          <span className="text-[11px] font-mono text-[#8c909f] mt-1">TLS 1.3 Strict • HSTS OK</span>
+          {reconDone ? (
+            <>
+              <span
+                className={`text-2xl font-bold font-mono mt-2 ${
+                  missingHeadersCount === 0 ? 'text-[#10b981]' : 'text-[#f59e0b]'
+                }`}
+              >
+                {missingHeadersCount}
+              </span>
+              <span className="text-[11px] font-mono text-[#8c909f] mt-1">En-têtes de durcissement manquants (sonde réelle)</span>
+            </>
+          ) : (
+            <>
+              <span className="text-2xl font-bold font-mono text-[#8c909f] mt-2">—</span>
+              <span className="text-[11px] font-mono text-[#8c909f] mt-1">Non audité — lancez la recon avancée</span>
+            </>
+          )}
         </div>
 
         <div className="bg-[#171b26] border border-[#24314c] rounded p-4 flex flex-col">
           <div className="flex items-center justify-between text-[#8c909f] font-mono text-xs">
-            <span>Moteur Fuzzing</span>
-            <span className="material-symbols-outlined text-[16px] text-[#f59e0b]">speed</span>
+            <span>Sonde HTTP</span>
+            <span className="material-symbols-outlined text-[16px] text-[#f59e0b]">http</span>
           </div>
-          <span className="text-2xl font-bold font-mono text-[#dfe2f1] mt-2">8.4k req/min</span>
-          <span className="text-[11px] font-mono text-[#f59e0b] mt-1">Throttling adaptatif actif</span>
+          {reconDone ? (
+            <>
+              <span className="text-2xl font-bold font-mono text-[#dfe2f1] mt-2">{probeHttpStatus ?? '—'}</span>
+              <span className="text-[11px] font-mono text-[#f59e0b] mt-1">
+                {probeHttpStatus !== null
+                  ? 'Code réel de la dernière sonde GET'
+                  : 'Cible injoignable (sonde réelle échouée)'}
+              </span>
+            </>
+          ) : (
+            <>
+              <span className="text-2xl font-bold font-mono text-[#8c909f] mt-2">—</span>
+              <span className="text-[11px] font-mono text-[#8c909f] mt-1">Aucune sonde exécutée</span>
+            </>
+          )}
         </div>
       </div>
 

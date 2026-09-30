@@ -69,6 +69,13 @@ export const AnalyseWebView: React.FC<AnalyseWebViewProps> = ({
     endpointsTree.map((e) => e.note).filter(Boolean) as string[]
   ));
   const techCount = technologies.length;
+  // Total réel d'endpoints qualifiés pour la bannière de transition :
+  // nœuds racine + sous-chemins découverts (l'ancien code affichait « 137 »
+  // hardcodé, sans aucun rapport avec le scan réel).
+  const totalEndpoints = endpointsTree.reduce(
+    (acc, e) => acc + 1 + (e.children?.length || 0),
+    0
+  );
 
   return (
     <div className="flex-1 overflow-y-auto p-5 flex flex-col gap-5 font-sans">
@@ -584,7 +591,7 @@ export const AnalyseWebView: React.FC<AnalyseWebViewProps> = ({
           <span className="material-symbols-outlined text-[24px] text-[#4cd7f6]">verified_user</span>
           <div>
             <strong className="text-[#dfe2f1] font-bold block text-sm">
-              Prêt pour la phase d'exploitation active — 137 cibles qualifiées
+              Prêt pour la phase d'exploitation active — {totalEndpoints} endpoint{totalEndpoints > 1 ? 's' : ''} qualifié{totalEndpoints > 1 ? 's' : ''}
             </strong>
             <span className="text-[#8c909f] text-[11px]">
               Transférez les endpoints et paramètres découverts dans le moteur de validation contrôlée.

@@ -5,6 +5,47 @@ import { WIFI_LAB_VECTORS } from '../data/wifiLabVectors';
 import dns from 'dns/promises';
 import net from 'net';
 
+// ============================================================
+//  Helpers « zéro simulation » du laboratoire
+// ============================================================
+
+/**
+ * Compteur monotone pour les IDs de findings du lab.
+ * Remplace l'ancien `Math.floor(Math.random() * 900 + 100)` : le random
+ * était non déterministe et susceptible de collisions ; un compteur
+ * monotone garantit l'unicité séquentielle au sein du processus.
+ */
+let labFindingSeq = 0;
+function nextLabFindingSeq(): number {
+  labFindingSeq += 1;
+  return labFindingSeq;
+}
+
+/**
+ * Score CVSS théorique conventionnel dérivé de la sévérité, selon les
+ * bandes NVD (CVSS v3.1) : CRITICAL 9.0–10.0, HIGH 7.0–8.9, MEDIUM 4.0–6.9,
+ * LOW 0.1–3.9 → point médian de la bande.
+ *
+ * ⚠ Honnêteté doctrinale : ce n'est PAS un calcul vectoriel CVSS v3.1
+ * (AV/AC/PR/UI/S/C/I/A) — c'est la valeur de référence pédagogique du bac
+ * à sable, appliquée de façon DÉTERMINISTE et IDENTIQUE partout.
+ * L'ancien code utilisait 4 mappings arbitraires différents selon la
+ * fonction (9.6/8.2/5.4, 9.5/8.0/5.5, 9.7/8.3/6.5/4.0, 9.5/8.0/6.0/4.0).
+ * (Une vraie calculatrice vectorielle v3.1 est prévue en phase 3.)
+ */
+export function theoreticalCvssFromSeverity(severity: Severity): number {
+  switch (severity) {
+    case 'CRITICAL':
+      return 9.5;
+    case 'HIGH':
+      return 8.0;
+    case 'MEDIUM':
+      return 5.5;
+    default: // LOW / INFO
+      return 2.5;
+  }
+}
+
 export interface SimulationExecutionResult {
   vectorId: string;
   vectorName: string;
@@ -31,9 +72,10 @@ export async function executeLabSimulation(
   const vector = LAB_ATTACK_VECTORS.find((v) => v.id === vectorId) || LAB_ATTACK_VECTORS[0];
   const startTime = Date.now();
 
-  // Simuler le délai réseau réaliste du test (30-90ms)
-  await new Promise((resolve) => setTimeout(resolve, 50));
-  const durationMs = Date.now() - startTime + Math.floor(Math.random() * 25);
+  // Doctrine « zéro simulation » : durationMs mesure le temps d'exécution
+  // RÉEL de la routine du bac à sable (l'ancien code injectait un setTimeout
+  // de 50ms + un random de 25ms pour « ressembler » à une latence réseau).
+  const durationMs = Date.now() - startTime;
 
   const isVulnerable = targetMode === 'vulnerable';
   const httpStatus = isVulnerable ? 200 : (vector.id === 'rate-limit-bypass' ? 429 : 403);
@@ -59,8 +101,8 @@ export async function executeLabSimulation(
   if (isVulnerable) {
     try {
       const db = await getDatabase();
-      const findingId = `LAB-FND-${Date.now().toString(36).toUpperCase()}-${Math.floor(Math.random() * 900 + 100)}`;
-      const cvss = vector.severity === 'CRITICAL' ? 9.6 : vector.severity === 'HIGH' ? 8.2 : 5.4;
+      const findingId = `LAB-FND-${Date.now().toString(36).toUpperCase()}-${nextLabFindingSeq()}`;
+      const cvss = theoreticalCvssFromSeverity(vector.severity);
 
       const findingObj: Finding = {
         id: findingId,
@@ -161,7 +203,11 @@ export async function executeLabSimulation(
  */
 export async function commitFullLabSuiteToReport(operatorId: string = 'SEC-OPS-0982') {
   const db = await getDatabase();
+  const suiteStart = Date.now();
   const scanId = `SCAN-LAB-${Date.now().toString(36).toUpperCase()}`;
+  // CVSS du scan = MAX réel des scores théoriques des vecteurs audité
+  // (l'ancien code hardcodait 8.8 sans dérivation). Durée = temps RÉEL
+  // d'exécution de la suite (l'ancien code hardcodait 1250ms).
 
   // Créer la cible virtuelle du laboratoire si elle n'existe pas
   db.run(
@@ -185,9 +231,9 @@ export async function commitFullLabSuiteToReport(operatorId: string = 'SEC-OPS-0
       'target-lab-sandbox',
       'http://shadowscan-lab.internal',
       'LAB_CYBER_RANGE_SUITE',
-      8.8,
+      Math.max(...LAB_ATTACK_VECTORS.map((v) => theoreticalCvssFromSeverity(v.severity))),
       'HIGH',
-      1250,
+      Date.now() - suiteStart,
       LAB_ATTACK_VECTORS.length,
       JSON.stringify(['Express', 'Node.js', 'SQLite3', 'WAF-Simulator']),
     ]
@@ -196,7 +242,7 @@ export async function commitFullLabSuiteToReport(operatorId: string = 'SEC-OPS-0
   // Insérer chaque vecteur dans la base findings
   for (const vector of LAB_ATTACK_VECTORS) {
     const fId = `FND-${vector.id.toUpperCase()}-${Date.now().toString(36)}`;
-    const cvss = vector.severity === 'CRITICAL' ? 9.5 : vector.severity === 'HIGH' ? 8.0 : 5.5;
+    const cvss = theoreticalCvssFromSeverity(vector.severity);
 
     db.run(
       `INSERT OR REPLACE INTO findings (
@@ -376,9 +422,10 @@ export async function executeWifiLabSimulation(
     WIFI_LAB_VECTORS.find((v) => v.id === vectorId) || WIFI_LAB_VECTORS[0];
   const startTime = Date.now();
 
-  // Simuler le délai d'analyse (15-90ms selon le vecteur)
-  await new Promise((resolve) => setTimeout(resolve, 60));
-  const durationMs = Date.now() - startTime + Math.floor(Math.random() * 40);
+  // Doctrine « zéro simulation » : durationMs mesure le temps d'exécution
+  // RÉEL de la routine du bac à sable (l'ancien code injectait un setTimeout
+  // de 60ms + un random de 40ms pour « ressembler » à une latence 802.11).
+  const durationMs = Date.now() - startTime;
 
   const isVulnerable = targetMode === 'vulnerable';
   // Pour WiFi, on simule un protocole 802.11 — pas de HTTP status classique.
@@ -409,15 +456,8 @@ export async function executeWifiLabSimulation(
   if (isVulnerable) {
     try {
       const db = await getDatabase();
-      const findingId = `WIFI-FND-${Date.now().toString(36).toUpperCase()}-${Math.floor(Math.random() * 900 + 100)}`;
-      const cvss =
-        vector.severity === 'CRITICAL'
-          ? 9.7
-          : vector.severity === 'HIGH'
-          ? 8.3
-          : vector.severity === 'MEDIUM'
-          ? 6.5
-          : 4.0;
+      const findingId = `WIFI-FND-${Date.now().toString(36).toUpperCase()}-${nextLabFindingSeq()}`;
+      const cvss = theoreticalCvssFromSeverity(vector.severity);
 
       const categoryPrefix = `WIFI_${vector.category.split('_')[1] || vector.category}`;
       const findingObj: Finding = {
@@ -519,6 +559,7 @@ export async function commitFullWifiLabSuiteToReport(
   operatorId: string = 'SEC-OPS-0982'
 ) {
   const db = await getDatabase();
+  const suiteStart = Date.now();
   const scanId = `SCAN-WIFI-LAB-${Date.now().toString(36).toUpperCase()}`;
 
   // Créer la cible virtuelle du laboratoire WiFi si elle n'existe pas
@@ -543,9 +584,9 @@ export async function commitFullWifiLabSuiteToReport(
       'target-wifi-lab-sandbox',
       'wifi://shadowscan-wifi-lab.internal',
       'WIFI_LAB_FULL_SUITE',
-      9.0,
+      Math.max(...WIFI_LAB_VECTORS.map((v) => theoreticalCvssFromSeverity(v.severity))),
       'HIGH',
-      1850,
+      Date.now() - suiteStart,
       WIFI_LAB_VECTORS.length,
       JSON.stringify(['802.11', 'WPA2', 'WPA3', 'PMF', 'SAE', 'hostapd-sandbox']),
     ]
@@ -554,14 +595,7 @@ export async function commitFullWifiLabSuiteToReport(
   // Insérer chaque vecteur WiFi dans la base findings
   for (const vector of WIFI_LAB_VECTORS) {
     const fId = `WIFI-FND-${vector.id.toUpperCase()}-${Date.now().toString(36)}`;
-    const cvss =
-      vector.severity === 'CRITICAL'
-        ? 9.5
-        : vector.severity === 'HIGH'
-        ? 8.0
-        : vector.severity === 'MEDIUM'
-        ? 6.0
-        : 4.0;
+    const cvss = theoreticalCvssFromSeverity(vector.severity);
     const categoryPrefix = `WIFI_${vector.category.split('_')[1] || vector.category}`;
 
     db.run(

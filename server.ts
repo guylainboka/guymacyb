@@ -65,10 +65,12 @@ async function startServer() {
       const targetCountRes = db.exec('SELECT COUNT(*) as count FROM targets');
       const scanCountRes = db.exec('SELECT COUNT(*) as count FROM scans');
       const findingsCountRes = db.exec('SELECT COUNT(*) as count FROM findings');
+      const endpointsCountRes = db.exec('SELECT COUNT(*) as count FROM endpoints');
 
       const targetCount = (targetCountRes[0]?.values[0]?.[0] as number) || 0;
       const scanCount = (scanCountRes[0]?.values[0]?.[0] as number) || 0;
       const findingsCount = (findingsCountRes[0]?.values[0]?.[0] as number) || 0;
+      const endpointsCount = (endpointsCountRes[0]?.values[0]?.[0] as number) || 0;
 
       res.json({
         status: 'UP',
@@ -79,6 +81,10 @@ async function startServer() {
           targetsCount: targetCount,
           scansCount: scanCount,
           findingsCount: findingsCount,
+          // Doctrine « zéro simulation » : le Footer affiche désormais ce
+          // compteur RÉEL (l'ancien code affichait un « 137 endpoints »
+          // hardcodé dans le JSX, contredit par la base vide au démarrage).
+          endpointsCount: endpointsCount,
         },
         memoryMb: Math.round(process.memoryUsage().heapUsed / 1024 / 1024),
         threads: os.cpus().length, // valeur réelle (l'ancien code hardcoded 8)
