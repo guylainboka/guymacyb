@@ -35,7 +35,7 @@ const crypto = require('crypto');
 // ---------------------------------------------------------------------------
 
 const APP_NAME = 'Guyma Cyb';
-const APP_VERSION = '1.0.0';
+const APP_VERSION = '2.0.0';
 const SERVER_PORT = 3000;
 const SERVER_HOST = '127.0.0.1';
 const HEALTH_URL = `http://${SERVER_HOST}:${SERVER_PORT}/api/health`;
@@ -581,6 +581,213 @@ ipcMain.handle('setup:detect-all', async () => {
   try { return await detectAll(); } catch (e) { return { error: e.message }; }
 });
 
+// ————————————————————————————————————————————————————————————————————————
+// Desktop Installer V2 — inventaire matériel, base SQLite, configuration.
+// Toutes les valeurs renvoyées sont RÉELLES (os.*, fs.*, sondes HTTP vers le
+// moteur local) — aucune donnée fabriquée (doctrine « zéro invention »).
+// ————————————————————————————————————————————————————————————————————————
+
+/** Sonde HTTP GET vers le moteur local (token de session en query, cf.
+ *  middleware server.ts — couches 1/2 passent : Host local, pas d'Origin).
+ *  Renvoie null si le moteur ne répond pas — l'appelant dégrade honnêtement. */
+function engineHttpGet(apiPath, timeoutMs = 1500) {
+  return new Promise((resolve) => {
+    const withToken = SESSION_TOKEN
+      ? `${apiPath}${apiPath.includes('?') ? '&' : '?'}gcyb_token=${SESSION_TOKEN}`
+      : apiPath;
+    const req = http.request(
+      { hostname: SERVER_HOST, port: SERVER_PORT, path: withToken, method: 'GET', timeout: timeoutMs },
+      (res) => {
+        let data = '';
+        res.on('data', (d) => { data += d; });
+        res.on('end', () => {
+          try { resolve(JSON.parse(data)); } catch { resolve(null); }
+        });
+      }
+    );
+    req.on('timeout', () => { req.destroy(); resolve(null); });
+    req.on('error', () => resolve(null));
+    req.end();
+  });
+}
+
+/** Sonde HTTP POST vers le moteur local (même authentification). */
+function engineHttpPost(apiPath, body, timeoutMs = 8000) {
+  return new Promise((resolve) => {
+    const payload = JSON.stringify(body || {});
+    const withToken = SESSION_TOKEN
+      ? `${apiPath}${apiPath.includes('?') ? '&' : '?'}gcyb_token=${SESSION_TOKEN}`
+      : apiPath;
+    const req = http.request(
+      {
+        hostname: SERVER_HOST,
+        port: SERVER_PORT,
+        path: withToken,
+        method: 'POST',
+        timeout: timeoutMs,
+        headers: { 'Content-Type': 'application/json', 'Content-Length': Buffer.byteLength(payload) },
+      },
+      (res) => {
+        let data = '';
+        res.on('data', (d) => { data += d; });
+        res.on('end', () => {
+          try { resolve(JSON.parse(data)); } catch { resolve(null); }
+        });
+      }
+    );
+    req.on('timeout', () => { req.destroy(); resolve(null); });
+    req.on('error', () => resolve(null));
+    req.write(payload);
+    req.end();
+  });
+}
+
+/** Chemin réel de la base SQLite pointée par le moteur (userData). */
+function dbFilePath() {
+  try {
+    return path.join(app.getPath('userData'), 'shadow_core.db');
+  } catch {
+    return path.join(process.cwd(), 'shadow_core.db');
+  }
+}
+
+// Inventaire matériel RÉEL (os.* du process main).
+ipcMain.handle('setup:get-system', async () => {
+  const os = require('os');
+  const cpus = os.cpus();
+  return {
+    platform: process.platform,
+    osRelease: os.release(),
+    hostname: os.hostname(),
+    cpuModel: (cpus[0] && cpus[0].model ? cpus[0].model.trim() : '—') || '—',
+    cpuThreads: cpus.length,
+    totalMemGb: Math.round((os.totalmem() / (1024 ** 3)) * 10) / 10,
+    freeMemGb: Math.round((os.freemem() / (1024 ** 3)) * 10) / 10,
+  };
+});
+
+// État de la base : fs réel + compteurs réels si le moteur tourne.
+ipcMain.handle('setup:db-status', async () => {
+  const p = dbFilePath();
+  let exists = false;
+  let sizeBytes = 0;
+  let writable = false;
+  try {
+    exists = fs.existsSync(p);
+    if (exists) sizeBytes = fs.statSync(p).size;
+    fs.mkdirSync(path.dirname(p), { recursive: true });
+    const probe = p + '.write-test';
+    fs.writeFileSync(probe, 'ok');
+    fs.unlinkSync(probe);
+    writable = true;
+  } catch { writable = false; }
+  // Compteurs réels uniquement si le moteur backend est joignable.
+  const info = await engineHttpGet('/api/setup/database');
+  if (info && !info.error) {
+    return {
+      path: info.path || p,
+      exists: true,
+      sizeBytes: typeof info.sizeBytes === 'number' ? info.sizeBytes : sizeBytes,
+      writable: true,
+      engine: 'server',
+      endpointsCount: (info.counts && info.counts.endpoints) || 0,
+      counters: info.counts || {},
+    };
+  }
+  return { path: p, exists, sizeBytes, writable, engine: 'filesystem', endpointsCount: 0 };
+});
+
+// Initialisation réelle : répertoire + test d'écriture ; schéma complet via
+// le moteur s'il tourne (réponse honnête sinon — rien n'est simulé).
+ipcMain.handle('setup:init-db', async () => {
+  const p = dbFilePath();
+  try {
+    fs.mkdirSync(path.dirname(p), { recursive: true });
+    const probe = p + '.write-test';
+    fs.writeFileSync(probe, 'ok');
+    fs.unlinkSync(probe);
+  } catch (e) {
+    return { initialized: false, path: p, error: 'Répertoire non accessible en écriture : ' + e.message };
+  }
+  const res = await engineHttpPost('/api/setup/database/init', {});
+  if (res && !res.error && res.ok) {
+    return {
+      initialized: true,
+      path: res.path || p,
+      sizeBytes: res.sizeBytes,
+      writable: true,
+      counters: res.counts || {},
+    };
+  }
+  let sizeNow = 0;
+  try { if (fs.existsSync(p)) sizeNow = fs.statSync(p).size; } catch { /* ignore */ }
+  return {
+    initialized: false,
+    path: p,
+    writable: true,
+    sizeBytes: sizeNow,
+    reason: res && res.error
+      ? 'moteur injoignable ou erreur : ' + res.error
+      : "le moteur backend n'est pas encore démarré — la base sera créée automatiquement au lancement de Guyma Cyb",
+  };
+});
+
+// Persistance de la configuration V2 : guymacyb-setup.json + .wslconfig réel.
+ipcMain.handle('setup:save-config', async (_event, cfg) => {
+  const safe = {
+    ramGb: Math.min(32, Math.max(2, Number(cfg && cfg.ramGb) || 8)),
+    networkingMode: (cfg && cfg.networkingMode) === 'bridged' ? 'bridged' : 'nat',
+    encryptLogs: Boolean(cfg && cfg.encryptLogs),
+  };
+  const result = { ok: true, config: safe };
+  try {
+    const file = path.join(app.getPath('userData'), 'guymacyb-setup.json');
+    let prev = {};
+    try { prev = JSON.parse(fs.readFileSync(file, 'utf8')); } catch { /* première sauvegarde */ }
+    fs.writeFileSync(file, JSON.stringify({ ...prev, ...safe, savedAt: new Date().toISOString() }, null, 2));
+  } catch (e) {
+    return { ok: false, error: "Impossible d'écrire guymacyb-setup.json : " + e.message };
+  }
+  // .wslconfig : réel sous Windows uniquement (refus honnête ailleurs).
+  if (process.platform === 'win32') {
+    try {
+      const userProfile = process.env.USERPROFILE;
+      if (!userProfile) throw new Error('USERPROFILE introuvable');
+      const wslConfigPath = path.join(userProfile, '.wslconfig');
+      const content = `[wsl2]\nmemory=${safe.ramGb}GB\nnetworkingMode=${safe.networkingMode}\n`;
+      fs.writeFileSync(wslConfigPath, content);
+      result.wslConfigPath = wslConfigPath;
+    } catch (e) {
+      result.wslConfigWritten = false;
+      result.reason = '.wslconfig non écrit : ' + e.message;
+    }
+  } else {
+    result.wslConfigWritten = false;
+    result.reason = `réservé à Windows (plateforme courante : ${process.platform})`;
+  }
+  return result;
+});
+
+// Lancement automatique au démarrage Windows (réglage réel d'Electron).
+ipcMain.handle('setup:set-autolaunch', async (_event, enabled) => {
+  try {
+    app.setLoginItemSettings({ openAsHidden: true, openAtLogin: Boolean(enabled) });
+    return { ok: true };
+  } catch (e) {
+    return { ok: false, error: e.message };
+  }
+});
+
+// Contrôles de la fenêtre wizard (frameless — barre de titre custom V2).
+ipcMain.handle('setup-window:minimize', () => { if (wizardWindow) wizardWindow.minimize(); });
+ipcMain.handle('setup-window:maximize', () => {
+  if (!wizardWindow) return false;
+  if (wizardWindow.isMaximized()) { wizardWindow.unmaximize(); return false; }
+  wizardWindow.maximize();
+  return true;
+});
+ipcMain.handle('setup-window:close', () => { if (wizardWindow) wizardWindow.close(); });
+
 ipcMain.handle('setup:install-wsl', async (event) => {
   const progress = (line) => event.sender.send('setup:progress', line);
   return await installWslElevated(progress);
@@ -690,13 +897,15 @@ let wizardOpenedOnDemand = false;
 
 function createWizardWindow() {
   wizardWindow = new BrowserWindow({
-    width: 880,
-    height: 680,
-    minWidth: 720,
-    minHeight: 600,
-    title: `${APP_NAME} — Assistant de configuration`,
-    backgroundColor: '#0a0e18',
-    frame: true,
+    width: 1200,
+    height: 840,
+    minWidth: 960,
+    minHeight: 640,
+    title: `${APP_NAME} // Desktop Installer`,
+    backgroundColor: '#131315',
+    // Frameless V2 (maquette) : barre de titre custom dans setup-wizard.html
+    // (drag region + boutons − ◻ × via les canaux setup-window:*).
+    frame: false,
     autoHideMenuBar: true,
     show: true,
     webPreferences: {
@@ -748,7 +957,14 @@ function createWizardWindow() {
  */
 function shouldShowWizard() {
   if (process.env.GCYB_SHOW_SETUP === '1') return true;
-  return false;
+  // V2 : l'assistant s'affiche au PREMIER lancement (marqueur
+  // .guymacyb-setup-done écrit par setup:launch-app / setup:skip). Il reste
+  // réouvrable à la demande depuis Core Manager.
+  try {
+    return !fs.existsSync(SETUP_DONE_FILE);
+  } catch {
+    return false;
+  }
 }
 
 // ---------------------------------------------------------------------------

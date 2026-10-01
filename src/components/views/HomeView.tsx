@@ -290,6 +290,43 @@ export const HomeView: React.FC<HomeViewProps> = ({ onSelectView }) => {
           </div>
         </div>
 
+        {/* ——— V2 : ACTIONS RAPIDES visibles en héros ——— */}
+        <div className="mt-4 border-t border-[#232838] pt-4">
+          <div className="mb-2 text-[10px] font-semibold uppercase tracking-widest text-[#8c909f]">
+            Actions rapides
+          </div>
+          <div className="flex flex-wrap gap-3">
+            <button
+              onClick={() => onSelectView('onboarding')}
+              className="flex min-h-[44px] items-center gap-2 rounded-lg bg-[#2563eb] px-4 py-2 text-sm font-semibold text-[#eeefff] transition hover:bg-[#3b82f6]"
+            >
+              <span className="material-symbols-outlined text-base">waving_hand</span>
+              Assistant d'installation V2
+            </button>
+            <button
+              onClick={installTools}
+              disabled={busy !== '' || (core?.isWindows && !wslOk)}
+              title={
+                core?.isWindows && !wslOk
+                  ? 'Nécessite une distribution WSL opérationnelle — relancez l\'assistant d\'installation'
+                  : 'Installe les outils Linux manquants (nmap, nikto, aircrack-ng…) dans le distro WSL'
+              }
+              className="flex min-h-[44px] items-center gap-2 rounded-lg border border-[#2c3245] bg-[#1a1f2b] px-4 py-2 text-sm font-medium text-white transition hover:border-[#4cd7f6]/50 hover:bg-[#1e2433] disabled:cursor-not-allowed disabled:opacity-50"
+            >
+              <span className="material-symbols-outlined text-base">download</span>
+              {busy === 'install' ? 'Installation…' : `Installer les outils Linux (${toolsTotal - toolsAvail} manquants)`}
+            </button>
+            <button
+              onClick={refreshWsl}
+              disabled={busy !== ''}
+              className="flex min-h-[44px] items-center gap-2 rounded-lg border border-[#2c3245] bg-[#1a1f2b] px-4 py-2 text-sm font-medium text-white transition hover:border-[#4cd7f6]/50 hover:bg-[#1e2433] disabled:opacity-50"
+            >
+              <span className="material-symbols-outlined text-base">refresh</span>
+              {busy === 'refresh' ? 'Détection…' : 'Re-détecter WSL'}
+            </button>
+          </div>
+        </div>
+
         {/* WSL installé mais AUCUN distro : panneau de correction en un clic */}
         {noDistro && (
           <div className="mt-4 rounded-lg border border-amber-500/30 bg-amber-500/10 p-4">

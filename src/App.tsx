@@ -25,8 +25,19 @@ import { WifiReseauView } from './components/views/WifiReseauView';
 import { CoursNotionsView } from './components/views/CoursNotionsView';
 import { LaboratoireWifiView } from './components/views/LaboratoireWifiView';
 import { TerminalView } from './components/views/TerminalView';
+import { OnboardingView, ONBOARDING_KEY } from './components/views/OnboardingView';
 
 export default function App() {
+  // Desktop Installer V2 : au premier lancement (marqueur localStorage),
+  // l'assistant d'installation plein écran s'affiche AVANT le shell.
+  const [onboardingDone, setOnboardingDone] = useState<boolean>(() => {
+    try { return localStorage.getItem(ONBOARDING_KEY) === 'done'; } catch { return false; }
+  });
+  const finishOnboarding = React.useCallback(() => {
+    setOnboardingDone(true);
+    setCurrentView('accueil');
+  }, []);
+
   const [currentView, setCurrentView] = useState<ModuleView>('accueil');
   const [targetConfig, setTargetConfig] = useState<TargetConfig>({
     url: 'https://example.com',
@@ -293,6 +304,19 @@ export default function App() {
 
   return (
     <div className="h-screen w-screen flex flex-col bg-[#0a0e18] text-[#dfe2f1] overflow-hidden select-none font-sans">
+      {/* Desktop Installer V2 — plein écran au premier lancement */}
+      {!onboardingDone && <OnboardingView onFinish={finishOnboarding} />}
+
+      {/* Assistant relancé à la demande (Accueil / Core Manager) : overlay au-dessus du shell */}
+      {onboardingDone && currentView === 'onboarding' && (
+        <OnboardingView
+          reopened
+          onFinish={() => {
+            setCurrentView('accueil');
+          }}
+        />
+      )}
+
       {/* Persistent Desktop Header */}
       <Header
         targetConfig={targetConfig}
@@ -422,7 +446,7 @@ export default function App() {
           )}
 
           {currentView === 'core-manager' && (
-            <CoreManagerView />
+            <CoreManagerView onOpenAssistant={() => setCurrentView('onboarding')} />
           )}
 
           {currentView === 'hid-attacks' && (

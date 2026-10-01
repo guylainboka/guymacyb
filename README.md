@@ -134,20 +134,44 @@ node desktop\build-server-bundle.js
 npx electron-builder --win nsis --x64
 ```
 
-## 🪟 Assistant de premier lancement (wizard)
+## 🪟 Desktop Installer V2 (assistant de premier lancement)
 
-Au premier lancement du `.exe`, un **assistant de configuration** démarre avant
-l'application principale :
+Au premier lancement du `.exe`, le **Desktop Installer V2** s'affiche plein écran
+(design system « Cybersecurity Desktop UI » : fond zinc `#131315`, Poppins,
+Courier Prime, bleu `#2563eb`, émeraude `#4edea3`) avant l'application principale :
 
-1. **Bienvenue** — présente le concept
-2. **WSL** — détecte WSL (`wsl.exe -l -v`), propose l'installation en 1 clic
-   (élévation UAC → `wsl --install`)
-3. **Outils Linux** — grille des 15 outils (nmap, aircrack-ng…), bouton
-   "Installer les manquants" → `apt-get install` dans WSL via `-u root` (pas de prompt sudo)
-4. **Terminé** — récapitulatif + "Lancer Guyma Cyb"
+1. **Bienvenue** — badges v2.0 Enterprise Pro / 100% Offline Capable, architecture
+   (WSL2 Linux · SQLite 3.42 · AES-256-GCM), EULA à accepter, et un panneau
+   **Vérification Système** alimenté par de vraies détections (`os.totalmem/freemem/cpus`,
+   `wsl.exe -l -v`) : RAM, CPU, présence d'un distro WSL2.
+2. **Environnement WSL2** — carte « Noyau WSL2 » avec badge réel (« Détecté & Prêt » /
+   « Non détecté » + bouton d'installation un clic avec élévation UAC), allocation
+   mémoire (slider 2–32 GB), mode pont réseau (NAT/Bridged), lancement automatique du
+   démon au démarrage Windows, carte « Base SQLite » (chemin réel, chiffrement,
+   indexation), et une **console de diagnostic en direct** qui journalise chaque
+   détection et chaque changement de configuration.
+3. **Base & SQLite** — initialisation réelle du schéma
+   (`targets · scans · endpoints · findings · audit_logs`) + compteurs réels
+   (volontairement à 0 au premier lancement).
+4. **Outils & Modules** — grille des outils réellement détectés (vérifiés ✔ / manquants),
+   installation `apt` en un clic dans le distro WSL2, vérification binaire par outil.
+5. **Finalisation** — récapitulatif réel de l'installation, puis « Entrer dans Guyma Cyb ».
 
-Un fichier-marqueur `userData/.guymacyb-setup-done` empêche le wizard de reparaître.
-Bouton "Configurer plus tard" à chaque étape.
+Deux implémentations du même design et du même parcours :
+- **desktop/setup-wizard.html** — fenêtre Electron frameless 1200×840 (barre de titre
+  custom, canaux IPC `setup:*` réels : inventaire `os.*`, état/initialisation de la base
+  via sondes HTTP authentifiées vers le moteur, génération réelle de `%USERPROFILE%\.wslconfig`,
+  `app.setLoginItemSettings` pour le démarrage automatique) ;
+- **src/components/views/OnboardingView.tsx** — version in-app (mode web/dev et relance
+  depuis l'Accueil ou Core Manager) qui consomme les mêmes API HTTP réelles
+  (`/api/setup/database`, `/api/setup/database/init`, `/api/setup/wsl-config`,
+  `/api/system/status`, `/api/core/status`, `/api/core/install-distro`, `/api/core/install-tools`).
+
+Un fichier-marqueur `userData/.guymacyb-setup-done` empêche le wizard de reparaître au
+démarrage ; il reste réouvrable à la demande (bouton « Assistant d'installation V2 » de
+l'Accueil, ou « Assistant de configuration » de Core Manager). **Doctrine inchangée :
+zéro donnée inventée** — les badges, compteurs et logs reflètent uniquement des
+détections et des écritures réelles ; en cas d'indisponibilité, l'état affiché est honnête.
 
 ## 🧱 Architecture
 

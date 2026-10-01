@@ -225,6 +225,82 @@ async function startServer() {
     }
   });
 
+  // ————————————————————————————————————————————————————————————————————————
+  // Desktop Installer V2 — endpoints de setup (réels, doctrine zéro invention)
+  // Consommés par l'OnboardingView in-app et par le wizard desktop via le
+  // process main (sondes engineHttpGet/Post). Aucune donnée fabriquée.
+  // ————————————————————————————————————————————————————————————————————————
+
+  // État réel de la base : chemin, taille, compteurs par table.
+  app.get('/api/setup/database', async (_req, res) => {
+    try {
+      const db = await getDatabase();
+      const tables = ['targets', 'scans', 'endpoints', 'findings', 'audit_logs'];
+      const counts: Record<string, number> = {};
+      for (const t of tables) {
+        try {
+          const r = db.exec(`SELECT COUNT(*) as count FROM ${t}`);
+          counts[t] = (r[0]?.values[0]?.[0] as number) || 0;
+        } catch {
+          counts[t] = 0;
+        }
+      }
+      const p = getDbFilePath();
+      let sizeBytes = 0;
+      try { sizeBytes = fs.statSync(p).size; } catch { /* fichier absent */ }
+      res.json({ path: p, sizeBytes, counts, ready: true });
+    } catch (err: any) {
+      res.status(500).json({ error: err.message, ready: false });
+    }
+  });
+
+  // Initialisation réelle du schéma (idempotent) + persistance disque.
+  app.post('/api/setup/database/init', async (_req, res) => {
+    try {
+      const db = await getDatabase(); // getDatabase() crée le schéma CREATE TABLE IF NOT EXISTS
+      await saveDatabaseToDisk(db);
+      const tables = ['targets', 'scans', 'endpoints', 'findings', 'audit_logs'];
+      const counts: Record<string, number> = {};
+      for (const t of tables) {
+        try {
+          const r = db.exec(`SELECT COUNT(*) as count FROM ${t}`);
+          counts[t] = (r[0]?.values[0]?.[0] as number) || 0;
+        } catch {
+          counts[t] = 0;
+        }
+      }
+      const p = getDbFilePath();
+      let sizeBytes = 0;
+      try { sizeBytes = fs.statSync(p).size; } catch { /* ignore */ }
+      res.json({ ok: true, path: p, sizeBytes, counts });
+    } catch (err: any) {
+      res.status(500).json({ ok: false, error: err.message });
+    }
+  });
+
+  // Génération du .wslconfig : Windows uniquement (refus honnête ailleurs —
+  // le wizard desktop écrit lui-même ce fichier côté process main).
+  app.post('/api/setup/wsl-config', async (req, res) => {
+    const { memoryGb, networkingMode } = req.body || {};
+    const mem = Math.min(32, Math.max(2, Number(memoryGb) || 8));
+    const mode = networkingMode === 'bridged' ? 'bridged' : 'nat';
+    if (process.platform !== 'win32') {
+      return res.status(400).json({
+        error: `Écriture de .wslconfig réservée à Windows (plateforme courante : ${process.platform}).`,
+        platform: process.platform,
+      });
+    }
+    try {
+      const userProfile = process.env.USERPROFILE || os.homedir();
+      const wslConfigPath = path.join(userProfile, '.wslconfig');
+      const content = `[wsl2]\nmemory=${mem}GB\nnetworkingMode=${mode}\n`;
+      fs.writeFileSync(wslConfigPath, content);
+      res.json({ ok: true, path: wslConfigPath, memoryGb: mem, networkingMode: mode });
+    } catch (err: any) {
+      res.status(500).json({ ok: false, error: err.message });
+    }
+  });
+
   // Connectivity check endpoint
   app.post('/api/scan/connectivity', async (req, res) => {
     try {

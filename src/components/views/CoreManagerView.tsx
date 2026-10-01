@@ -53,7 +53,12 @@ const fmtMb = (mb: number) => {
   return `${Math.round(mb)} MB`;
 };
 
-export const CoreManagerView: React.FC = () => {
+interface CoreManagerViewProps {
+  /** V2 : ouvre l'assistant d'installation in-app (overlay) hors Electron. */
+  onOpenAssistant?: () => void;
+}
+
+export const CoreManagerView: React.FC<CoreManagerViewProps> = ({ onOpenAssistant }) => {
   const [status, setStatus] = useState<CoreStatus | null>(null);
   const [loading, setLoading] = useState<boolean>(true);
   const [error, setError] = useState<string | null>(null);
@@ -114,6 +119,10 @@ export const CoreManagerView: React.FC = () => {
         // Petit délai puis rafraîchissement (le wizard peut prendre du temps).
         // On rafraîchit aussi à chaque focus de fenêtre principale ci-dessous.
         setTimeout(() => void refresh(), 2000);
+      } else if (typeof onOpenAssistant === 'function') {
+        // V2 : hors Electron, on ouvre l'assistant d'installation in-app
+        // (même design, mêmes APIs HTTP réelles) au lieu d'une erreur.
+        onOpenAssistant();
       } else {
         setError('Assistant indisponible hors du logiciel desktop. Lancez « wsl --install » dans PowerShell (admin) puis réessayez.');
       }

@@ -1,7 +1,7 @@
 {
   "name": "guymacyb",
   "private": true,
-  "version": "1.0.0",
+  "version": "2.0.0",
   "type": "module",
   "description": "Logiciel Windows de cybersécurité exécutant de vrais outils Linux via WSL (inspiré de StrykerOSS). Scanner réseau, audit web, tests WiFi, arsenal, GeoMac.",
   "author": "Guyma Cyb Security Systems",

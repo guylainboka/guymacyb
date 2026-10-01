@@ -101,7 +101,7 @@ export const Footer: React.FC<FooterProps> = ({
       </div>
 
       <div className="hidden md:flex items-center gap-3">
-        <span className="text-[#dfe2f1] font-semibold">Guyma Cyb v1.0.0</span>
+        <span className="text-[#dfe2f1] font-semibold">Guyma Cyb v2.0.0</span>
         <span className="text-[#424754]">|</span>
         <span title="Mémoire heap réelle du processus backend (process.memoryUsage, via /api/health)">
           Memory: {health.memoryMb !== null ? `${health.memoryMb} MB` : dash}

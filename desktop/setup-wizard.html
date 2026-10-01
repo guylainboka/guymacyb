@@ -3,482 +3,1290 @@
 <head>
 <meta charset="UTF-8">
 <!-- CSP (audit SEC-AUDIT-1 — F1/M5) : document local sans aucun appel réseau
-     (toute la communication passe par l'IPC Electron — preload setup-preload.cjs).
-     script/style inline assumés (document embarqué) ; seules les Google Fonts
-     sont chargées. connect-src 'none' garantit qu'aucune exfiltration réseau
-     n'est possible depuis le wizard, même en cas d'injection HTML. -->
+     depuis le renderer (toute la communication passe par l'IPC Electron —
+     preload setup-preload.cjs ; les sondes HTTP éventuelles sont faites par le
+     process MAIN, jamais ici). script/style inline assumés (document embarqué) ;
+     seules les Google Fonts (Poppins / Courier Prime / Material Symbols —
+     design system V2) sont chargées. connect-src 'none' garantit qu'aucune
+     exfiltration réseau n'est possible depuis le wizard. -->
 <meta http-equiv="Content-Security-Policy" content="default-src 'self' file:; script-src 'self' file: 'unsafe-inline'; style-src 'self' file: 'unsafe-inline' https://fonts.googleapis.com; font-src 'self' file: https://fonts.gstatic.com; img-src 'self' file: data:; connect-src 'none'; object-src 'none'; base-uri 'none'">
-<title>Guyma Cyb — Assistant de configuration</title>
-<link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Material+Symbols+Outlined:opsz,wght,FILL,GRAD@24,400,0,0&family=JetBrains+Mono:wght@400;500&display=swap">
+<title>Guyma Cyb // Desktop Installer</title>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link href="https://fonts.googleapis.com/css2?family=Poppins:wght@400;500;600&family=Courier+Prime&family=Material+Symbols+Outlined:opsz,wght,FILL,GRAD@24,400,0,0&display=swap" rel="stylesheet">
 <style>
+  /* ======================================================================
+     DESIGN SYSTEM V2 — « Cybersecurity Desktop UI » (DESIGN.md)
+     Fond zinc #131315, bleu électrique #2563eb, émeraude #4edea3.
+     Profondeur = couches tonales + contours bas contraste (pas d'ombres lourdes).
+     ====================================================================== */
   :root {
-    --bg: #0a0e18; --panel: #171b26; --panel2: #1b2030; --border: #24314c;
-    --text: #dfe2f1; --muted: #8c909f; --primary: #4d8eff; --cyan: #4cd7f6;
-    --green: #10b981; --red: #ffb4ab; --amber: #fbbf24;
+    --surface: #131315;
+    --surface-lowest: #0e0e10;
+    --surface-low: #1c1b1d;
+    --surface-container: #201f22;
+    --surface-high: #2a2a2c;
+    --surface-highest: #353437;
+    --on-surface: #e5e1e4;
+    --on-surface-variant: #c3c6d7;
+    --outline: #8d90a0;
+    --outline-variant: #434655;
+    --primary: #b4c5ff;
+    --on-primary: #002a78;
+    --primary-container: #2563eb;
+    --on-primary-container: #eeefff;
+    --secondary: #adc6ff;
+    --tertiary: #4edea3;
+    --on-tertiary: #003824;
+    --tertiary-container: #007d55;
+    --on-tertiary-container: #bdffdb;
+    --error: #ffb4ab;
+    --error-container: #93000a;
+    --on-error-container: #ffdad6;
+    --amber: #fbbf24;
+    --r-lg: 4px;   /* boutons, inputs, badges carrés */
+    --r-xl: 8px;   /* cartes */
+    --r-full: 12px;/* pilules */
   }
   * { box-sizing: border-box; margin: 0; padding: 0; }
+  html, body { height: 100%; }
   body {
-    font-family: 'Segoe UI', system-ui, sans-serif; background: var(--bg);
-    color: var(--text); height: 100vh; overflow: hidden; user-select: none;
+    font-family: 'Poppins', system-ui, sans-serif;
+    font-size: 13px; line-height: 18px;
+    background: var(--surface); color: var(--on-surface);
+    overflow: hidden; user-select: none;
   }
-  .topbar {
-    height: 56px; background: var(--panel); border-bottom: 1px solid var(--border);
-    display: flex; align-items: center; padding: 0 20px; gap: 12px;
+  .material-symbols-outlined {
+    font-family: 'Material Symbols Outlined';
+    font-weight: normal; font-style: normal; line-height: 1;
+    letter-spacing: normal; text-transform: none; display: inline-block;
+    white-space: nowrap; word-wrap: normal; direction: ltr;
+    font-variation-settings: 'FILL' 0, 'wght' 400, 'GRAD' 0, 'opsz' 24;
   }
-  .logo {
-    width: 36px; height: 36px; border-radius: 8px; background: rgba(77,142,255,.15);
-    border: 1px solid rgba(77,142,255,.4); display: flex; align-items: center;
-    justify-content: center; color: var(--primary);
-  }
-  .logo .material-symbols-outlined { font-size: 22px; }
-  .brand { font-weight: 700; font-size: 15px; }
-  .brand .ver { font-family: 'JetBrains Mono', monospace; font-size: 11px; color: var(--muted); margin-left: 8px; }
-  .stepper {
-    display: flex; gap: 0; flex: 1; justify-content: flex-end;
-  }
-  .step-pill {
-    display: flex; align-items: center; gap: 6px; padding: 6px 10px; font-size: 11px;
-    color: var(--muted); font-family: 'JetBrains Mono', monospace;
-  }
-  .step-pill .num {
-    width: 20px; height: 20px; border-radius: 50%; background: var(--panel2);
-    display: flex; align-items: center; justify-content: center; font-size: 10px;
-    border: 1px solid var(--border);
-  }
-  .step-pill.active { color: var(--primary); }
-  .step-pill.active .num { background: var(--primary); color: #fff; border-color: var(--primary); }
-  .step-pill.done { color: var(--green); }
-  .step-pill.done .num { background: var(--green); color: #06120c; border-color: var(--green); }
+  .fill .material-symbols-outlined, .material-symbols-outlined.fill { font-variation-settings: 'FILL' 1, 'wght' 400, 'GRAD' 0, 'opsz' 24; }
+  .mono { font-family: 'Courier Prime', monospace; font-size: 12px; line-height: 16px; }
 
-  .container {
-    height: calc(100vh - 56px - 64px); padding: 28px 32px; overflow-y: auto;
-  }
-  .step-content { max-width: 760px; margin: 0 auto; display: none; }
-  .step-content.active { display: block; animation: fade .3s ease; }
-  @keyframes fade { from { opacity: 0; transform: translateY(8px); } to { opacity: 1; } }
-
-  h1 { font-size: 22px; margin-bottom: 8px; }
-  h2 { font-size: 16px; margin-bottom: 6px; color: var(--cyan); }
-  p { color: var(--muted); line-height: 1.6; margin-bottom: 16px; font-size: 13px; }
-  .card {
-    background: var(--panel); border: 1px solid var(--border); border-radius: 10px;
-    padding: 18px; margin-bottom: 14px;
-  }
-  .row { display: flex; align-items: center; justify-content: space-between; gap: 12px; }
-  .status-line { display: flex; align-items: center; gap: 10px; font-size: 13px; }
-  .dot { width: 8px; height: 8px; border-radius: 50%; flex-shrink: 0; }
-  .dot.ok { background: var(--green); }
-  .dot.warn { background: var(--amber); }
-  .dot.err { background: var(--red); }
-  .dot.idle { background: var(--muted); }
-  .badge {
-    font-family: 'JetBrains Mono', monospace; font-size: 10px; padding: 2px 8px;
-    border-radius: 4px; border: 1px solid var(--border); color: var(--muted);
-  }
-  .badge.ok { color: var(--green); border-color: rgba(16,185,129,.4); background: rgba(16,185,129,.08); }
-  .badge.warn { color: var(--amber); border-color: rgba(251,191,36,.4); background: rgba(251,191,36,.08); }
-  .badge.info { color: var(--cyan); border-color: rgba(76,215,246,.4); background: rgba(76,215,246,.08); }
-
-  .btn {
-    font-family: inherit; font-size: 13px; font-weight: 600; padding: 9px 18px;
-    border-radius: 8px; border: 1px solid var(--border); background: var(--panel2);
-    color: var(--text); cursor: pointer; display: inline-flex; align-items: center; gap: 8px;
-    transition: all .15s;
-  }
-  .btn:hover { background: #232838; }
-  .btn:disabled { opacity: .45; cursor: not-allowed; }
-  .btn.primary { background: var(--primary); color: #fff; border-color: var(--primary); }
-  .btn.primary:hover { background: #3b7ae0; }
-  .btn.success { background: var(--green); color: #06120c; border-color: var(--green); }
-  .btn .material-symbols-outlined { font-size: 18px; }
-
-  .log {
-    background: #060912; border: 1px solid var(--border); border-radius: 8px;
-    padding: 12px; font-family: 'JetBrains Mono', monospace; font-size: 11px;
-    color: var(--muted); max-height: 160px; overflow-y: auto; margin-top: 12px;
-    white-space: pre-wrap; word-break: break-all;
-  }
-  .log .ok { color: var(--green); }
-  .log .err { color: var(--red); }
-  .log .info { color: var(--cyan); }
-
-  .tools-grid { display: grid; grid-template-columns: 1fr 1fr; gap: 8px; }
-  .tool-chip {
-    display: flex; align-items: center; justify-content: space-between; padding: 8px 12px;
-    background: var(--panel2); border: 1px solid var(--border); border-radius: 6px; font-size: 12px;
-    font-family: 'JetBrains Mono', monospace;
-  }
-  .tool-chip .dot { width: 7px; height: 7px; }
-
-  .footer {
-    position: absolute; bottom: 0; left: 0; right: 0; height: 64px;
-    background: var(--panel); border-top: 1px solid var(--border); padding: 0 32px;
+  /* ——— Header fixe 40px (drag region) ——— */
+  header {
+    position: fixed; top: 0; left: 0; right: 0; height: 40px; z-index: 50;
+    background: var(--surface-lowest);
     display: flex; align-items: center; justify-content: space-between;
+    padding: 0 16px; user-select: none;
+    -webkit-app-region: drag;
   }
-  .spinner {
-    width: 14px; height: 14px; border: 2px solid var(--border); border-top-color: var(--primary);
-    border-radius: 50%; animation: spin .8s linear infinite; display: inline-block;
+  header .brand { display: flex; align-items: center; gap: 4px; }
+  header .brand .material-symbols-outlined { color: var(--primary); font-size: 16px; }
+  header .brand span.label {
+    font-size: 11px; line-height: 14px; font-weight: 600; letter-spacing: .08em; color: var(--on-surface);
   }
-  @keyframes spin { to { transform: rotate(360deg); } }
-  .note { font-size: 11px; color: var(--muted); }
-  .material-symbols-outlined { font-size: 16px; vertical-align: middle; }
+  header .right { display: flex; align-items: center; gap: 8px; -webkit-app-region: no-drag; }
+  header .avatar {
+    width: 32px; height: 32px; border-radius: 50%; background: var(--primary);
+    display: flex; align-items: center; justify-content: center;
+  }
+  header .avatar .material-symbols-outlined { color: var(--on-primary); font-size: 18px; }
+  .win-btn {
+    width: 12px; height: 12px; border-radius: 50%; border: none; cursor: pointer;
+    background: var(--surface-high); color: var(--on-surface-variant);
+    font-size: 10px; line-height: 10px; display: flex; align-items: center; justify-content: center;
+    padding: 0;
+  }
+  .win-btn:hover { background: var(--surface-highest); }
+  .win-btn.close { background: var(--error-container); color: var(--on-error-container); }
+  .win-btn.close:hover { background: var(--error); color: var(--on-error); }
+
+  /* ——— Sidebar fixe 288px ——— */
+  aside {
+    position: fixed; left: 0; top: 40px; bottom: 0; width: 288px; z-index: 40;
+    background: var(--surface-low);
+    display: flex; flex-direction: column; padding: 16px 0;
+  }
+  .sidebar-label {
+    padding: 0 16px; margin-bottom: 16px;
+    font-size: 11px; line-height: 14px; font-weight: 500; letter-spacing: .08em;
+    text-transform: uppercase; color: var(--on-surface-variant);
+  }
+  aside nav { flex: 1; padding: 0 8px; display: flex; flex-direction: column; gap: 4px; }
+  .nav-item {
+    display: flex; align-items: center; padding: 8px 16px; border-radius: var(--r-xl);
+    color: var(--on-surface-variant); background: transparent; border: none;
+    font-family: inherit; font-size: 13px; line-height: 18px; text-align: left; width: 100%;
+    cursor: pointer; transition: background .15s, color .15s;
+  }
+  .nav-item .material-symbols-outlined { font-size: 18px; margin-right: 8px; }
+  .nav-item:hover { background: var(--surface-high); color: var(--on-surface); }
+  .nav-item.active { background: var(--primary-container); color: var(--on-primary-container); font-weight: 500; }
+
+  /* ——— Zone principale scrollable ——— */
+  main {
+    position: fixed; left: 288px; top: 40px; right: 0; bottom: 0;
+    background: var(--surface); overflow-y: auto;
+  }
+  main .content { padding: 32px; padding-bottom: 48px; max-width: 1280px; }
+
+  /* ——— Typo ——— */
+  .eyebrow-row { display: flex; align-items: center; gap: 4px; margin-bottom: 4px; }
+  .eyebrow { font-size: 11px; line-height: 14px; font-weight: 500; letter-spacing: .1em; text-transform: uppercase; color: var(--primary); }
+  .eyebrow-dim { font-size: 11px; line-height: 14px; font-weight: 500; letter-spacing: .1em; text-transform: uppercase; color: var(--on-surface-variant); }
+  h1.title { font-size: 28px; line-height: 36px; font-weight: 600; letter-spacing: -.02em; color: var(--on-surface); }
+  h2.card-title { font-size: 22px; line-height: 28px; font-weight: 600; letter-spacing: -.01em; color: var(--on-surface); }
+  h3.sub { font-size: 18px; line-height: 24px; font-weight: 500; color: var(--on-surface); }
+  .body-lg { font-size: 15px; line-height: 22px; color: var(--on-surface-variant); }
+  .body-sm { font-size: 12px; line-height: 16px; color: var(--on-surface-variant); }
+  .label-md { font-size: 12px; line-height: 16px; font-weight: 500; letter-spacing: .02em; color: var(--on-surface); }
+  .label-sm { font-size: 11px; line-height: 14px; font-weight: 500; letter-spacing: .04em; }
+
+  /* ——— Badges / pilules ——— */
+  .pill {
+    display: inline-flex; align-items: center; gap: 4px;
+    padding: 4px 16px; border-radius: var(--r-full);
+    font-size: 12px; line-height: 16px; font-weight: 500; letter-spacing: .02em;
+  }
+  .pill .material-symbols-outlined { font-size: 14px; }
+  .pill.primary { background: var(--primary-container); color: var(--on-primary-container); }
+  .pill.neutral { background: var(--surface-high); color: var(--on-surface-variant); }
+  .pill.tertiary { background: var(--tertiary-container); color: var(--on-tertiary-container); }
+  .pill.amber { background: #78350f; color: #fde68a; }
+  .tag {
+    display: inline-flex; align-items: center; gap: 4px;
+    padding: 4px 8px; border-radius: var(--r-lg);
+    font-size: 11px; line-height: 14px; font-weight: 500;
+  }
+  .tag.tertiary { background: var(--tertiary-container); color: var(--on-tertiary-container); }
+  .tag.amber { background: #78350f; color: #fde68a; }
+
+  /* ——— Cartes ——— */
+  .card {
+    position: relative; overflow: hidden;
+    background: var(--surface-low); border-radius: var(--r-xl); padding: 24px;
+  }
+  .card.glow-blue::before, .card.glow-green::before {
+    content: ''; position: absolute; right: -48px; width: 192px; height: 192px;
+    border-radius: 50%; background: rgba(37, 99, 235, .05); filter: blur(40px); pointer-events: none;
+  }
+  .card.glow-blue::before { top: -48px; }
+  .card.glow-green::before { bottom: -48px; background: rgba(78, 222, 163, .05); }
+  .card-inner { background: var(--surface-container); border-radius: var(--r-xl); padding: 16px; }
+
+  /* ——— Boutons ——— */
+  .btn {
+    display: inline-flex; align-items: center; gap: 4px; border: none; cursor: pointer;
+    font-family: inherit; font-size: 12px; line-height: 16px; font-weight: 500; letter-spacing: .02em;
+    padding: 8px 24px; border-radius: var(--r-xl); transition: background .15s, border-color .15s;
+  }
+  .btn .material-symbols-outlined { font-size: 16px; }
+  .btn:disabled { opacity: .45; cursor: not-allowed; }
+  .btn-primary { background: var(--primary-container); color: var(--on-primary-container); }
+  .btn-primary:hover:not(:disabled) { background: #3b82f6; }
+  .btn-tint { background: var(--primary); color: var(--on-primary); }
+  .btn-tint:hover:not(:disabled) { background: #c7d4ff; }
+  .btn-ghost { background: var(--surface-high); color: var(--on-surface); }
+  .btn-ghost:hover:not(:disabled) { background: var(--surface-highest); }
+  .btn-amber { background: #78350f; color: #fde68a; }
+  .btn-amber:hover:not(:disabled) { background: #92400e; }
+
+  /* ——— Toggle switch (maquette : 36×20, piste zinc, actif bleu) ——— */
+  .switch { position: relative; display: inline-block; width: 36px; height: 20px; cursor: pointer; }
+  .switch input { position: absolute; opacity: 0; width: 0; height: 0; }
+  .switch .track { position: absolute; inset: 0; background: var(--surface-high); border-radius: 999px; transition: background .15s; }
+  .switch .knob { position: absolute; top: 2px; left: 2px; width: 16px; height: 16px; background: #fff; border-radius: 50%; transition: transform .15s; }
+  .switch input:checked ~ .track { background: var(--primary-container); }
+  .switch input:checked ~ .knob { transform: translateX(16px); }
+
+  /* ——— Slider RAM ——— */
+  input[type=range].ram {
+    -webkit-appearance: none; appearance: none; width: 100%; height: 6px;
+    background: var(--surface-high); border-radius: 999px; outline: none; cursor: pointer;
+  }
+  input[type=range].ram::-webkit-slider-thumb {
+    -webkit-appearance: none; appearance: none; width: 16px; height: 16px;
+    border-radius: 50%; background: var(--primary); border: none; cursor: pointer;
+  }
+
+  /* ——— Checkbox EULA ——— */
+  .eula-check { display: flex; align-items: center; gap: 12px; cursor: pointer; }
+  .eula-check input { position: absolute; opacity: 0; width: 0; height: 0; }
+  .eula-check .box {
+    width: 16px; height: 16px; flex: none; border-radius: var(--r-lg);
+    border: 1px solid var(--outline-variant); background: var(--surface-container);
+    display: inline-flex; align-items: center; justify-content: center;
+    transition: background .15s, border-color .15s;
+  }
+  .eula-check .box .material-symbols-outlined { font-size: 14px; color: var(--on-primary-container); opacity: 0; }
+  .eula-check input:checked ~ .box { background: var(--primary-container); border-color: var(--primary-container); }
+  .eula-check input:checked ~ .box .material-symbols-outlined { opacity: 1; }
+  .eula-check input:focus-visible ~ .box { outline: 2px solid var(--primary); outline-offset: 2px; }
+
+  /* ——— Terminal de diagnostic ——— */
+  .terminal {
+    background: var(--surface-lowest); border-radius: var(--r-xl); padding: 16px; margin-bottom: 32px;
+  }
+  .terminal .bar {
+    display: flex; align-items: center; justify-content: space-between;
+    padding-bottom: 8px; margin-bottom: 8px; border-bottom: 1px solid var(--surface-high);
+  }
+  .terminal .dots { display: flex; gap: 6px; }
+  .terminal .dots span { width: 12px; height: 12px; border-radius: 50%; display: inline-block; }
+  .terminal .dots .d1 { background: rgba(255, 180, 171, .4); }
+  .terminal .dots .d2 { background: rgba(173, 198, 255, .4); }
+  .terminal .dots .d3 { background: rgba(78, 222, 163, .4); }
+  .terminal .bar .title { font-size: 11px; letter-spacing: .08em; text-transform: uppercase; color: var(--on-surface-variant); margin-left: 8px; }
+  .terminal .clear-btn { background: none; border: none; color: var(--on-surface-variant); font-family: inherit; font-size: 11px; font-weight: 500; letter-spacing: .04em; cursor: pointer; }
+  .terminal .clear-btn:hover { color: var(--on-surface); }
+  .terminal .logs { display: flex; flex-direction: column; gap: 4px; max-height: 144px; overflow-y: auto; padding-right: 4px; }
+  .terminal .log-row { display: flex; align-items: flex-start; gap: 8px; font-family: 'Courier Prime', monospace; font-size: 12px; line-height: 16px; color: var(--on-surface-variant); }
+  .terminal .log-row .t { color: var(--outline); flex: none; }
+  .terminal .log-row .tag { flex: none; }
+  .terminal .log-row .tag.INFO, .terminal .log-row .tag.CONFIG { color: var(--primary); }
+  .terminal .log-row .tag.SUCCESS { color: var(--tertiary); }
+  .terminal .log-row .tag.READY { color: var(--secondary); }
+  .terminal .log-row .tag.WARN, .terminal .log-row .tag.ERROR { color: var(--error); }
+  .terminal .log-row .msg { word-break: break-word; user-select: text; }
+
+  /* ——— Étape 1 : layout 2 colonnes + cartes de vérification ——— */
+  .step1-grid { display: grid; grid-template-columns: 1fr; gap: 16px; }
+  @media (min-width: 1100px) { .step1-grid { grid-template-columns: minmax(0, 1fr) 400px; align-items: start; } }
+  .spec-row { display: flex; gap: 48px; flex-wrap: wrap; border-top: 1px solid var(--surface-high); padding-top: 16px; margin-top: 24px; }
+  .spec .k { font-size: 11px; letter-spacing: .08em; text-transform: uppercase; color: var(--on-surface-variant); margin-bottom: 8px; }
+  .spec .v { display: flex; align-items: center; gap: 6px; font-weight: 500; color: var(--on-surface); font-size: 13px; }
+  .spec .v .material-symbols-outlined { font-size: 18px; color: var(--primary); }
+  .check-card { background: var(--surface-container); border-radius: var(--r-xl); padding: 12px; display: flex; align-items: center; gap: 12px; }
+  .check-card .ic {
+    width: 32px; height: 32px; flex: none; border-radius: var(--r-lg);
+    background: rgba(37, 99, 235, .12); color: var(--primary);
+    display: flex; align-items: center; justify-content: center;
+  }
+  .check-card .ic .material-symbols-outlined { font-size: 18px; }
+  .check-card .txt { flex: 1; min-width: 0; }
+  .check-card .txt .t { font-weight: 500; font-size: 13px; color: var(--on-surface); line-height: 18px; }
+  .check-card .txt .d { font-size: 12px; color: var(--on-surface-variant); line-height: 16px; margin-top: 2px; }
+  .check-card .state { flex: none; display: flex; align-items: center; gap: 6px; }
+  .check-card .state .material-symbols-outlined.ok { color: var(--tertiary); font-size: 20px; }
+  .check-card .state .material-symbols-outlined.ko { color: var(--amber); font-size: 20px; }
+  .note-box {
+    border: 1px solid var(--outline-variant); border-radius: var(--r-xl); padding: 12px;
+    display: flex; gap: 8px; align-items: flex-start; color: var(--on-surface-variant); font-size: 12px; line-height: 16px;
+    background: rgba(32, 31, 34, .5);
+  }
+  .note-box .material-symbols-outlined { font-size: 16px; color: var(--outline); flex: none; margin-top: 1px; }
+
+  /* ——— Grille principale étape 2 ——— */
+  .grid-2-1 { display: grid; grid-template-columns: 1fr; gap: 16px; margin-bottom: 32px; }
+  @media (min-width: 1100px) { .grid-2-1 { grid-template-columns: 2fr 1fr; } }
+  .card-head { display: flex; align-items: center; justify-content: space-between; gap: 8px; margin-bottom: 16px; }
+  .card-head .left { display: flex; align-items: center; gap: 8px; min-width: 0; }
+  .card-head .ic {
+    width: 40px; height: 40px; flex: none; border-radius: var(--r-xl);
+    display: flex; align-items: center; justify-content: center;
+  }
+  .card-head .ic.blue { background: rgba(37, 99, 235, .1); color: var(--primary); }
+  .card-head .ic.green { background: rgba(78, 222, 163, .1); color: var(--tertiary); }
+  .card-head .ic .material-symbols-outlined { font-size: 20px; }
+  .grid-2 { display: grid; grid-template-columns: 1fr; gap: 16px; margin: 16px 0; }
+  @media (min-width: 720px) { .grid-2 { grid-template-columns: 1fr 1fr; } }
+  .net-btn {
+    border: none; cursor: pointer; font-family: inherit; padding: 8px 8px; border-radius: var(--r-lg);
+    font-size: 12px; line-height: 16px; font-weight: 500; letter-spacing: .02em; text-align: center;
+    background: var(--surface-high); color: var(--on-surface-variant); transition: background .15s, color .15s;
+  }
+  .net-btn:hover { background: var(--surface-highest); }
+  .net-btn.active { background: var(--primary); color: var(--on-primary); }
+  .toggle-row { display: flex; align-items: center; justify-content: space-between; gap: 12px; padding-top: 16px; margin-top: 16px; border-top: 1px solid var(--surface-high); }
+  .toggle-row .left { display: flex; align-items: center; gap: 8px; min-width: 0; }
+  .toggle-row .left > .material-symbols-outlined { color: var(--primary); font-size: 18px; flex: none; }
+  .idx-row { background: var(--surface-container); border-radius: var(--r-xl); padding: 16px; display: flex; align-items: center; justify-content: space-between; margin-top: 16px; }
+  .idx-row .left { display: flex; align-items: center; gap: 8px; font-size: 12px; color: var(--on-surface); }
+  .idx-row .dot { width: 8px; height: 8px; border-radius: 50%; background: var(--tertiary); animation: pulse 2s infinite; }
+  @keyframes pulse { 0%, 100% { opacity: 1; } 50% { opacity: .35; } }
+
+  /* ——— Étape 4 : grille d'outils ——— */
+  .tools-grid { display: grid; grid-template-columns: repeat(auto-fill, minmax(180px, 1fr)); gap: 8px; margin: 16px 0; }
+  .tool-chip {
+    display: flex; align-items: center; gap: 8px; padding: 8px 12px;
+    background: var(--surface-container); border-radius: var(--r-lg);
+    font-family: 'Courier Prime', monospace; font-size: 12px; color: var(--on-surface);
+  }
+  .tool-chip .material-symbols-outlined { font-size: 16px; }
+  .tool-chip.ok .material-symbols-outlined { color: var(--tertiary); }
+  .tool-chip.missing { color: var(--on-surface-variant); }
+  .tool-chip.missing .material-symbols-outlined { color: var(--amber); }
+
+  /* ——— Étape 5 : récapitulatif ——— */
+  .sum-row { display: flex; align-items: flex-start; justify-content: space-between; gap: 16px; padding: 12px 0; border-bottom: 1px solid var(--surface-high); }
+  .sum-row:last-child { border-bottom: none; }
+  .sum-row .k { font-size: 12px; color: var(--on-surface-variant); flex: none; }
+  .sum-row .v { font-size: 12px; color: var(--on-surface); text-align: right; word-break: break-all; user-select: text; }
+
+  /* ——— Pied de navigation des étapes ——— */
+  .step-footer {
+    display: flex; align-items: center; justify-content: space-between;
+    padding-top: 16px; border-top: 1px solid var(--surface-high);
+  }
+
+  .step { display: none; }
+  .step.active { display: block; animation: fade .25s ease; }
+  @keyframes fade { from { opacity: 0; transform: translateY(6px); } to { opacity: 1; transform: none; } }
+
+  /* Scrollbars discrètes (design system : pas de scrollbar lourde) */
+  ::-webkit-scrollbar { width: 8px; height: 8px; }
+  ::-webkit-scrollbar-thumb { background: var(--surface-highest); border-radius: 999px; }
+  ::-webkit-scrollbar-track { background: transparent; }
 </style>
 </head>
 <body>
-<div class="topbar">
-  <div class="logo"><span class="material-symbols-outlined">security</span></div>
-  <div class="brand">Guyma Cyb<span class="ver">Setup Wizard · v1.0.0</span></div>
-  <div class="stepper">
-    <div class="step-pill" id="pill-1"><span class="num">1</span>Bienvenue</div>
-    <div class="step-pill" id="pill-2"><span class="num">2</span>WSL</div>
-    <div class="step-pill" id="pill-3"><span class="num">3</span>Outils Linux</div>
-    <div class="step-pill" id="pill-4"><span class="num">4</span>Terminé</div>
-  </div>
-</div>
 
-<div class="container">
-  <!-- Étape 1 : Bienvenue -->
-  <div class="step-content active" id="step-1">
-    <h1>Bienvenue dans Guyma Cyb</h1>
-    <p>
-      Guyma Cyb est un logiciel Windows qui exécute de <strong>vrais outils Linux</strong> de sécurité
-      (nmap, aircrack-ng, hashcat, searchsploit, metasploit…) grâce au pont WSL
-      (Windows Subsystem for Linux). Inspiré de StrykerOSS sur Android, adapté à Windows.
-    </p>
-    <div class="card">
-      <h2>Cet assistant va configurer</h2>
-      <div class="status-line" style="margin-bottom:10px"><span class="dot ok"></span>WSL — Windows Subsystem for Linux (les outils Linux y tournent)</div>
-      <div class="status-line" style="margin-bottom:10px"><span class="dot ok"></span>Les outils Linux manquants (nmap, aircrack-ng, nikto, hashcat…)</div>
-      <div class="status-line" style="margin-bottom:10px"><span class="dot ok"></span>Vérification du noyau Rust (optionnel — fallback Node disponible)</div>
-      <div class="status-line"><span class="dot info"></span>Scans de base (HTTP, ports, DNS, TLS, réseau local) fonctionnent SANS WSL via Node</div>
-    </div>
-    <p>
-      Vous pouvez configurer plus tard, mais les modules WiFi / Arsenal avancés nécessiteront WSL.
-      Le scan web de base est immédiatement disponible.
-    </p>
-    <div class="row" style="justify-content:flex-start; gap:10px">
-      <button class="btn primary" onclick="goToStep(2)"><span class="material-symbols-outlined">play_arrow</span>Commencer la configuration</button>
-      <button class="btn" onclick="skipWizard()">Configurer plus tard</button>
-    </div>
+<!-- ============================ HEADER ============================ -->
+<header>
+  <div class="brand">
+    <span class="material-symbols-outlined">shield</span>
+    <span class="label">Guyma Cyb // Desktop Installer</span>
   </div>
+  <div class="right">
+    <div class="avatar"><span class="material-symbols-outlined">person</span></div>
+    <button class="win-btn" id="win-min" title="Réduire" aria-label="Réduire">−</button>
+    <button class="win-btn" id="win-max" title="Agrandir" aria-label="Agrandir">◻</button>
+    <button class="win-btn close" id="win-close" title="Fermer" aria-label="Fermer">×</button>
+  </div>
+</header>
 
-  <!-- Étape 2 : WSL — détection uniquement. Si WSL est déjà installé, on passe
-       automatiquement à l'étape suivante. Sinon, on PROPOSE l'installation
-       (jamais imposée : l'utilisateur peut continuer sans WSL). -->
-  <div class="step-content" id="step-2">
-    <h1>Étape 2 — WSL (Windows Subsystem for Linux)</h1>
-    <p>Guyma Cyb vérifie si WSL est déjà installé sur votre machine. Les scans de base (HTTP, ports, DNS, TLS, réseau local) fonctionnent SANS WSL via le moteur Node intégré.</p>
-    <div class="card">
-      <div class="row">
-        <div class="status-line">
-          <span class="dot idle" id="wsl-dot"></span>
-          <span id="wsl-status">Vérification de WSL…</span>
-          <span class="badge" id="wsl-badge">en cours</span>
+<!-- ============================ SIDEBAR ============================ -->
+<aside>
+  <div class="sidebar-label">Onboarding Setup</div>
+  <nav id="nav">
+    <button class="nav-item" data-step="1"><span class="material-symbols-outlined">waving_hand</span>1. Bienvenue</button>
+    <button class="nav-item" data-step="2"><span class="material-symbols-outlined">terminal</span>2. Environnement WSL2</button>
+    <button class="nav-item" data-step="3"><span class="material-symbols-outlined">database</span>3. Base &amp; SQLite</button>
+    <button class="nav-item" data-step="4"><span class="material-symbols-outlined">extension</span>4. Outils &amp; Modules</button>
+    <button class="nav-item" data-step="5"><span class="material-symbols-outlined">check_circle</span>5. Finalisation</button>
+  </nav>
+</aside>
+
+<!-- ============================ MAIN ============================ -->
+<main>
+<div class="content">
+
+  <!-- ============================================================ -->
+  <!-- ÉTAPE 1 — BIENVENUE                                           -->
+  <!-- ============================================================ -->
+  <section class="step" data-step="1">
+    <div class="step1-grid">
+      <!-- Colonne centrale -->
+      <div>
+        <div class="card glow-blue" style="margin-bottom:16px;">
+          <div style="display:flex; align-items:center; gap:8px; margin-bottom:16px; flex-wrap:wrap;">
+            <span class="pill primary"><span class="material-symbols-outlined">settings</span>v2.0 Enterprise Pro</span>
+            <span class="pill neutral">100% Offline Capable</span>
+          </div>
+          <h1 class="title">Bienvenue dans l'assistant d'installation de Guyma Cyb</h1>
+          <p class="body-lg" style="margin-top:12px;">
+            Configurez votre poste de travail d'audit offensif haute performance.
+            Cette suite intègre un noyau WSL2 Ubuntu isolé, une base de données locale
+            sécurisée <span class="mono" style="background:var(--surface-container); padding:1px 6px; border-radius:4px; color:var(--primary);">shadow_core.db</span>,
+            et des modules de pentest entièrement autonomes.
+          </p>
+          <div class="spec-row">
+            <div class="spec">
+              <div class="k">Architecture</div>
+              <div class="v"><span class="material-symbols-outlined">developer_board</span>WSL2 Linux</div>
+            </div>
+            <div class="spec">
+              <div class="k">Stockage local</div>
+              <div class="v"><span class="material-symbols-outlined">database</span>SQLite 3.42</div>
+            </div>
+            <div class="spec">
+              <div class="k">Chiffrement</div>
+              <div class="v"><span class="material-symbols-outlined">lock</span>AES-256-GCM</div>
+            </div>
+          </div>
         </div>
-        <button class="btn primary" id="wsl-install-btn" onclick="installWsl()" disabled style="display:none">
-          <span class="material-symbols-outlined">download</span>Installer WSL
-        </button>
+
+        <!-- EULA -->
+        <div class="card">
+          <div style="display:flex; align-items:flex-start; justify-content:space-between; gap:12px; margin-bottom:16px;">
+            <div style="display:flex; align-items:center; gap:8px;">
+              <span class="material-symbols-outlined" style="color:var(--primary);">handshake</span>
+              <h3 class="sub">Accord de Licence Utilisateur Final (EULA)</h3>
+            </div>
+            <span class="mono" style="color:var(--outline);">v2.0-RELEASE</span>
+          </div>
+          <div class="mono" style="background:var(--surface-lowest); border-radius:var(--r-xl); padding:16px; color:var(--on-surface-variant); display:flex; flex-direction:column; gap:8px; user-select:text;">
+            <span>1. ACCÈDE AUX MODULES OFFENSIFS&nbsp;: En installant Guyma Cyb v2.0, vous certifiez posséder les autorisations légales requises pour effectuer des tests d'intrusion sur les cibles configurées.</span>
+            <span>2. ISOLATION DE L'ENVIRONNEMENT&nbsp;: Tous les journaux d'exécution, artefacts et charges utiles sont stockés exclusivement dans le conteneur WSL2 local et le fichier shadow_core.db.</span>
+          </div>
+          <label class="eula-check" style="margin-top:16px;">
+            <input type="checkbox" id="eula-checkbox">
+            <span class="box"><span class="material-symbols-outlined">check</span></span>
+            <span class="body-md" style="font-size:13px; color:var(--on-surface);">J'accepte les conditions d'utilisation et les licences d'outils tiers autorisés</span>
+          </label>
+        </div>
       </div>
-      <!-- Proposition d'installation (affichée UNIQUEMENT si WSL est absent) -->
-      <div id="wsl-proposal" style="display:none; margin-top:14px; padding:14px; background:var(--panel2); border:1px solid var(--border); border-radius:8px">
-        <div class="status-line" style="margin-bottom:8px"><span class="material-symbols-outlined" style="color:var(--amber)">info</span><strong style="font-size:13px">WSL n'est pas installé — voulez-vous l'installer ?</strong></div>
-        <p style="margin-bottom:10px">L'installation est proposée, jamais imposée. Cliquez sur le bouton ci-dessus pour lancer l'installation officielle Microsoft (fenêtre UAC — droits administrateur requis, un redémarrage peut être demandé), ou installez-le vous-même via la <a href="https://learn.microsoft.com/fr-fr/windows/wsl/install" style="color:var(--primary)" onclick="window.guymacybSetup && window.guymacybSetup.openExternal && window.guymacybSetup.openExternal('https://learn.microsoft.com/fr-fr/windows/wsl/install') && event.preventDefault()">documentation officielle</a>, puis relancez la vérification.</p>
-        <div class="row" style="gap:10px; justify-content:flex-start">
-          <button class="btn" onclick="detectWsl()"><span class="material-symbols-outlined">refresh</span>Revérifier</button>
-          <button class="btn" onclick="goToStep(3)">Continuer sans WSL<span class="material-symbols-outlined">arrow_forward</span></button>
+
+      <!-- Colonne droite : vérification système -->
+      <div style="display:flex; flex-direction:column; gap:16px;">
+        <div class="card" style="padding:16px;">
+          <div style="display:flex; align-items:center; justify-content:space-between; margin-bottom:16px;">
+            <div style="display:flex; align-items:center; gap:8px;">
+              <span class="material-symbols-outlined fill" style="color:var(--tertiary); font-size:18px;">verified_user</span>
+              <h3 class="sub" style="font-size:16px;">Vérification Système</h3>
+            </div>
+            <span class="tag tertiary" id="sys-global-badge">Analyse…</span>
+          </div>
+          <div style="display:flex; flex-direction:column; gap:8px;">
+            <div class="check-card">
+              <div class="ic"><span class="material-symbols-outlined">memory</span></div>
+              <div class="txt">
+                <div class="t">Mémoire Vive (RAM)</div>
+                <div class="d" id="check-ram">Détection…</div>
+              </div>
+              <div class="state"><span class="material-symbols-outlined fill" id="check-ram-ic" style="font-size:20px; color:var(--outline);">radio_button_unchecked</span></div>
+            </div>
+            <div class="check-card">
+              <div class="ic"><span class="material-symbols-outlined">hardware</span></div>
+              <div class="txt">
+                <div class="t">Processeur (CPU)</div>
+                <div class="d" id="check-cpu">Détection…</div>
+              </div>
+              <div class="state"><span class="material-symbols-outlined fill" id="check-cpu-ic" style="font-size:20px; color:var(--outline);">radio_button_unchecked</span></div>
+            </div>
+            <div class="check-card">
+              <div class="ic"><span class="material-symbols-outlined">personal_video</span></div>
+              <div class="txt">
+                <div class="t">Sous-système Windows (WSL2)</div>
+                <div class="d" id="check-wsl">Détection…</div>
+              </div>
+              <div class="state"><span class="material-symbols-outlined fill" id="check-wsl-ic" style="font-size:20px; color:var(--outline);">radio_button_unchecked</span></div>
+            </div>
+          </div>
+          <div class="note-box" style="margin-top:16px;">
+            <span class="material-symbols-outlined">info</span>
+            <span>Le démon d'arrière-plan s'exécutera avec les privilèges restreints de l'utilisateur courant dans l'espace de noms WSL2.</span>
+          </div>
+        </div>
+
+        <div class="card" style="padding:16px; display:flex; gap:8px; justify-content:flex-end;">
+          <button class="btn btn-ghost" id="btn-cancel">Annuler</button>
+          <button class="btn btn-tint" id="btn-start" disabled>Commencer l'installation
+            <span class="material-symbols-outlined">arrow_forward</span>
+          </button>
         </div>
       </div>
-      <div class="log" id="wsl-log" style="display:none"></div>
     </div>
-    <p class="note">Guyma Cyb n'installe jamais WSL de lui-même : l'installation n'est lancée que si vous cliquez sur « Installer WSL ».</p>
-    <div class="row" style="justify-content:flex-start; gap:10px; margin-top:16px">
-      <button class="btn primary" id="step2-next" onclick="goToStep(3)" disabled>Suivant<span class="material-symbols-outlined">arrow_forward</span></button>
-      <button class="btn" onclick="goToStep(1)">Retour</button>
-    </div>
-  </div>
+  </section>
 
-  <!-- Étape 3 : Outils Linux -->
-  <div class="step-content" id="step-3">
-    <h1>Étape 3 — Outils Linux de sécurité</h1>
-    <p>Dans WSL, installons les outils de pentest. La détection est réelle (vérifie <code>which</code> dans WSL).</p>
-    <div class="card">
-      <div class="row" style="margin-bottom:12px">
-        <div class="status-line">
-          <span class="dot idle" id="tools-dot"></span>
-          <span id="tools-status">Détection des outils…</span>
-          <span class="badge" id="tools-badge">en cours</span>
+  <!-- ============================================================ -->
+  <!-- ÉTAPE 2 — ENVIRONNEMENT WSL2 (maquette code.html)             -->
+  <!-- ============================================================ -->
+  <section class="step" data-step="2">
+    <!-- Breadcrumb + titre -->
+    <div style="display:flex; align-items:flex-start; justify-content:space-between; gap:16px; margin-bottom:24px; flex-wrap:wrap;">
+      <div style="min-width:0;">
+        <div class="eyebrow-row">
+          <span class="eyebrow">Étape 2 sur 5</span>
+          <span style="color:var(--on-surface-variant);">•</span>
+          <span class="eyebrow-dim">Système &amp; Données</span>
         </div>
-        <button class="btn primary" id="tools-install-btn" onclick="installTools()" disabled>
-          <span class="material-symbols-outlined">build</span>Installer les manquants
-        </button>
+        <h1 class="title">Configuration du Noyau d'Exécution &amp; Base de Données</h1>
+        <p class="body-lg" style="margin-top:4px;">Paramétrez votre environnement d'isolation WSL2 et l'instance SQLite chiffrée pour le stockage local des téléporteurs et des flux d'audit.</p>
+      </div>
+      <span class="pill tertiary" id="step2-global-badge" style="align-self:flex-start;">
+        <span class="material-symbols-outlined fill">check_circle</span>Système Opérationnel
+      </span>
+    </div>
+
+    <div class="grid-2-1">
+      <!-- Carte Noyau WSL2 -->
+      <div class="card glow-blue" style="display:flex; flex-direction:column; justify-content:space-between;">
+        <div>
+          <div class="card-head">
+            <div class="left">
+              <div class="ic blue"><span class="material-symbols-outlined">terminal</span></div>
+              <div>
+                <h2 class="card-title" style="font-size:20px;" id="wsl-card-title">Noyau WSL2</h2>
+                <p class="body-sm">Virtualisation légère pour l'analyse de paquets et l'exécution de conteneurs</p>
+              </div>
+            </div>
+            <span class="tag amber" id="wsl-card-badge">Détection…</span>
+          </div>
+          <button class="btn btn-amber" id="btn-install-wsl" style="display:none; margin-top:8px;">
+            <span class="material-symbols-outlined">download</span>Installer WSL2 + Ubuntu (un clic, élévation UAC)
+          </button>
+          <div class="grid-2">
+            <div class="card-inner">
+              <div style="display:flex; justify-content:space-between; align-items:center; margin-bottom:4px;">
+                <label class="label-md" for="ram-slider">Allocation Mémoire (RAM)</label>
+                <span class="mono" style="color:var(--primary);" id="ram-value">8 GB</span>
+              </div>
+              <input type="range" class="ram" id="ram-slider" min="2" max="32" step="2" value="8">
+              <p class="body-sm" style="margin-top:8px;">Recommandé : 8 Go min. pour l'analyse heuristique en temps réel.</p>
+            </div>
+            <div class="card-inner">
+              <label class="label-md" style="display:block; margin-bottom:4px;">Mode Pont Réseau</label>
+              <div style="display:grid; grid-template-columns:1fr 1fr; gap:4px;">
+                <button class="net-btn active" id="net-nat" type="button">NAT (Défaut)</button>
+                <button class="net-btn" id="net-bridged" type="button">Bridged</button>
+              </div>
+              <p class="body-sm" style="margin-top:8px;">NAT isole le sous-réseau virtuel de l'hôte principal.</p>
+            </div>
+          </div>
+        </div>
+        <div class="toggle-row">
+          <div class="left">
+            <span class="material-symbols-outlined">bolt</span>
+            <div>
+              <span class="label-md" style="display:block;">Lancement automatique du démon au démarrage Windows</span>
+              <span class="body-sm">Maintient les services de surveillance actifs en arrière-plan</span>
+            </div>
+          </div>
+          <label class="switch">
+            <input type="checkbox" id="autolaunch-toggle" checked>
+            <span class="track"></span><span class="knob"></span>
+          </label>
+        </div>
+      </div>
+
+      <!-- Carte Base SQLite -->
+      <div class="card glow-green" style="display:flex; flex-direction:column; justify-content:space-between;">
+        <div>
+          <div class="card-head">
+            <div class="left">
+              <div class="ic green"><span class="material-symbols-outlined">database</span></div>
+              <div>
+                <h2 class="card-title" style="font-size:20px;">Base SQLite</h2>
+                <p class="body-sm">Stockage local sécurisé</p>
+              </div>
+            </div>
+          </div>
+          <div style="display:flex; flex-direction:column; gap:16px; margin:16px 0;">
+            <div>
+              <label class="label-md" style="display:block; margin-bottom:4px;">Chemin du fichier</label>
+              <div class="mono" style="display:flex; align-items:center; gap:4px; background:var(--surface-container); padding:8px; border-radius:var(--r-xl); color:var(--primary);">
+                <span class="material-symbols-outlined" style="font-size:16px; color:var(--on-surface-variant);">folder_open</span>
+                <span style="overflow:hidden; text-overflow:ellipsis; white-space:nowrap;" id="db-path">~/.guyma/shadow_core.db</span>
+              </div>
+            </div>
+            <div class="card-inner" style="display:flex; align-items:center; justify-content:space-between;">
+              <div>
+                <span class="label-md" style="display:block;">Chiffrement AES-256-GCM</span>
+                <span class="body-sm">Protection intégrale des journaux</span>
+              </div>
+              <label class="switch">
+                <input type="checkbox" id="encrypt-toggle" checked>
+                <span class="track"></span><span class="knob"></span>
+              </label>
+            </div>
+          </div>
+        </div>
+        <div class="idx-row">
+          <div class="left"><span class="dot"></span><span>Indexation active</span></div>
+          <span class="mono" style="color:var(--tertiary); font-weight:400;" id="db-endpoints">… Endpoints indexés</span>
+        </div>
+      </div>
+    </div>
+
+    <!-- Console de diagnostic -->
+    <div class="terminal">
+      <div class="bar">
+        <div style="display:flex; align-items:center;">
+          <div class="dots"><span class="d1"></span><span class="d2"></span><span class="d3"></span></div>
+          <span class="title">Console de Diagnostic En Direct // guyma-daemon.log</span>
+        </div>
+        <button class="clear-btn" id="terminal-clear">Effacer</button>
+      </div>
+      <div class="logs" id="terminal-logs"></div>
+    </div>
+
+    <div class="step-footer">
+      <button class="btn btn-ghost nav-back" data-target="1"><span class="material-symbols-outlined">arrow_back</span>Retour</button>
+      <button class="btn btn-primary nav-next" data-target="3">Étape suivante (Installation des outils)<span class="material-symbols-outlined">arrow_forward</span></button>
+    </div>
+  </section>
+
+  <!-- ============================================================ -->
+  <!-- ÉTAPE 3 — BASE & SQLITE                                       -->
+  <!-- ============================================================ -->
+  <section class="step" data-step="3">
+    <div style="display:flex; align-items:flex-start; justify-content:space-between; gap:16px; margin-bottom:24px; flex-wrap:wrap;">
+      <div style="min-width:0;">
+        <div class="eyebrow-row">
+          <span class="eyebrow">Étape 3 sur 5</span>
+          <span style="color:var(--on-surface-variant);">•</span>
+          <span class="eyebrow-dim">Système &amp; Données</span>
+        </div>
+        <h1 class="title">Initialisation de la Base Locale Sécurisée</h1>
+        <p class="body-lg" style="margin-top:4px;">Créez et vérifiez l'instance SQLite qui stockera vos cibles, scans, findings et journaux d'audit, exclusivement en local.</p>
+      </div>
+      <span class="tag tertiary" id="db-badge" style="align-self:flex-start;">Non vérifiée</span>
+    </div>
+
+    <div class="grid-2-1">
+      <div class="card glow-green">
+        <div class="card-head">
+          <div class="left">
+            <div class="ic green"><span class="material-symbols-outlined">database</span></div>
+            <div>
+              <h2 class="card-title" style="font-size:20px;">shadow_core.db</h2>
+              <p class="body-sm">Schéma : targets · scans · endpoints · findings · audit_logs</p>
+            </div>
+          </div>
+          <button class="btn btn-primary" id="btn-init-db"><span class="material-symbols-outlined">play_arrow</span>Initialiser et vérifier</button>
+        </div>
+        <div style="display:flex; flex-direction:column; gap:8px; margin-top:16px;">
+          <div class="check-card"><div class="ic"><span class="material-symbols-outlined">folder_open</span></div>
+            <div class="txt"><div class="t">Chemin</div><div class="d mono" id="init-db-path" style="user-select:text;">—</div></div></div>
+          <div class="check-card"><div class="ic"><span class="material-symbols-outlined">save</span></div>
+            <div class="txt"><div class="t">Taille du fichier</div><div class="d" id="init-db-size">—</div></div></div>
+          <div class="check-card"><div class="ic"><span class="material-symbols-outlined">edit_note</span></div>
+            <div class="txt"><div class="t">Droit d'écriture</div><div class="d" id="init-db-writable">—</div></div></div>
+        </div>
+      </div>
+
+      <div class="card">
+        <h3 class="sub" style="font-size:16px; margin-bottom:12px;">Compteurs réels</h3>
+        <div style="display:flex; flex-direction:column; gap:8px;" id="db-counters">
+          <div class="idx-row" style="margin-top:0; padding:12px;"><div class="left"><span>Cibles</span></div><span class="mono" style="color:var(--primary);" id="cnt-targets">—</span></div>
+          <div class="idx-row" style="margin-top:0; padding:12px;"><div class="left"><span>Scans</span></div><span class="mono" style="color:var(--primary);" id="cnt-scans">—</span></div>
+          <div class="idx-row" style="margin-top:0; padding:12px;"><div class="left"><span>Endpoints</span></div><span class="mono" style="color:var(--primary);" id="cnt-endpoints">—</span></div>
+          <div class="idx-row" style="margin-top:0; padding:12px;"><div class="left"><span>Findings</span></div><span class="mono" style="color:var(--primary);" id="cnt-findings">—</span></div>
+          <div class="idx-row" style="margin-top:0; padding:12px;"><div class="left"><span>Journaux d'audit</span></div><span class="mono" style="color:var(--primary);" id="cnt-audit">—</span></div>
+        </div>
+        <div class="note-box" style="margin-top:16px;">
+          <span class="material-symbols-outlined">info</span>
+          <span>Au premier lancement, la base démarre volontairement vide : aucun chiffre n'est pré-rempli. Les compteurs reflètent uniquement vos vraies données.</span>
+        </div>
+      </div>
+    </div>
+
+    <div class="terminal">
+      <div class="bar">
+        <div style="display:flex; align-items:center;">
+          <div class="dots"><span class="d1"></span><span class="d2"></span><span class="d3"></span></div>
+          <span class="title">Console de Diagnostic En Direct // guyma-daemon.log</span>
+        </div>
+        <button class="clear-btn" id="terminal-clear-2">Effacer</button>
+      </div>
+      <div class="logs" id="terminal-logs-2"></div>
+    </div>
+
+    <div class="step-footer">
+      <button class="btn btn-ghost nav-back" data-target="2"><span class="material-symbols-outlined">arrow_back</span>Retour</button>
+      <button class="btn btn-primary nav-next" data-target="4">Étape suivante (Outils &amp; Modules)<span class="material-symbols-outlined">arrow_forward</span></button>
+    </div>
+  </section>
+
+  <!-- ============================================================ -->
+  <!-- ÉTAPE 4 — OUTILS & MODULES                                    -->
+  <!-- ============================================================ -->
+  <section class="step" data-step="4">
+    <div style="display:flex; align-items:flex-start; justify-content:space-between; gap:16px; margin-bottom:24px; flex-wrap:wrap;">
+      <div style="min-width:0;">
+        <div class="eyebrow-row">
+          <span class="eyebrow">Étape 4 sur 5</span>
+          <span style="color:var(--on-surface-variant);">•</span>
+          <span class="eyebrow-dim">Arsenal offensif</span>
+        </div>
+        <h1 class="title">Installation des Outils &amp; Modules de Pentest</h1>
+        <p class="body-lg" style="margin-top:4px;">Vérifiez et installez la palette d'outils Linux (nmap, nikto, sqlmap, hashcat…) dans le conteneur WSL2. Chaque outil est vérifié individuellement après installation.</p>
+      </div>
+      <span class="tag tertiary" id="tools-badge" style="align-self:flex-start;">Détection…</span>
+    </div>
+
+    <div class="card glow-blue">
+      <div class="card-head">
+        <div class="left">
+          <div class="ic blue"><span class="material-symbols-outlined">extension</span></div>
+          <div>
+            <h2 class="card-title" style="font-size:20px;">Modules disponibles</h2>
+            <p class="body-sm" id="tools-subtitle">Détection en cours…</p>
+          </div>
+        </div>
+        <button class="btn btn-primary" id="btn-install-tools"><span class="material-symbols-outlined">download</span>Installer les outils manquants (apt)</button>
       </div>
       <div class="tools-grid" id="tools-grid"></div>
-      <div class="log" id="tools-log" style="display:none"></div>
+      <div class="note-box">
+        <span class="material-symbols-outlined">info</span>
+        <span id="tools-note">L'installation utilise apt dans la distribution WSL2 détectée et peut prendre plusieurs minutes selon la connexion. Aucun outil n'est simulé : un outil n'est marqué « vérifié » que si son binaire répond à une exécution réelle.</span>
+      </div>
     </div>
-    <p class="note">L'installation utilise <code>sudo apt-get install</code> dans WSL — votre mot de passe WSL vous sera demandé. Liste : nmap, nikto, whatweb, aircrack-ng, tshark, iperf3, dnsrecon, sslscan, sqlmap, gobuster, hashcat, exploitdb (searchsploit).</p>
-    <div class="row" style="justify-content:flex-start; gap:10px; margin-top:16px">
-      <button class="btn primary" id="step3-next" onclick="goToStep(4)" disabled>Suivant<span class="material-symbols-outlined">arrow_forward</span></button>
-      <button class="btn" onclick="goToStep(2)">Retour</button>
-    </div>
-  </div>
 
-  <!-- Étape 4 : Terminé -->
-  <div class="step-content" id="step-4">
-    <h1>Configuration terminée</h1>
-    <p>Votre environnement Guyma Cyb est prêt. Voici le récapitulatif :</p>
-    <div class="card" id="summary-card"></div>
-    <div class="card">
-      <h2>Que peut-on faire maintenant ?</h2>
-      <div class="status-line" style="margin-bottom:8px"><span class="dot ok"></span>Scanner & Recon — ping, DNS, ports (TCP), technologies, SSL/TLS</div>
-      <div class="status-line" style="margin-bottom:8px"><span class="dot ok"></span>Analyse Web — en-têtes de sécurité, endpoints, findings</div>
-      <div class="status-line" style="margin-bottom:8px"><span class="dot ok"></span>Réseau Local — découverte mDNS/SSDP/NetBIOS/rDNS (rootless)</div>
-      <div class="status-line" style="margin-bottom:8px"><span class="dot ok"></span>Terminal — exécution shell réelle (bash/WSL)</div>
-      <div class="status-line" style="margin-bottom:8px"><span class="dot ok"></span>Arsenal — searchsploit/hashcat (si installés)</div>
-      <div class="status-line"><span class="dot warn"></span>WiFi — nécessite une clé WiFi USB mode monitor + aircrack-ng</div>
+    <div class="terminal" style="margin-top:24px;">
+      <div class="bar">
+        <div style="display:flex; align-items:center;">
+          <div class="dots"><span class="d1"></span><span class="d2"></span><span class="d3"></span></div>
+          <span class="title">Console de Diagnostic En Direct // guyma-daemon.log</span>
+        </div>
+        <button class="clear-btn" id="terminal-clear-3">Effacer</button>
+      </div>
+      <div class="logs" id="terminal-logs-3"></div>
     </div>
-    <div class="row" style="justify-content:flex-start; gap:10px; margin-top:16px">
-      <button class="btn success" onclick="launchApp()"><span class="material-symbols-outlined">rocket_launch</span>Lancer Guyma Cyb</button>
-    </div>
-  </div>
-</div>
 
-<div class="footer">
-  <span class="note" id="footer-note">Guyma Cyb — logiciel Windows exécutant de vrais outils Linux via WSL</span>
-  <div class="row" style="gap:10px">
-    <span id="global-spinner" style="display:none"><span class="spinner"></span> <span class="note">opération en cours…</span></span>
-  </div>
+    <div class="step-footer">
+      <button class="btn btn-ghost nav-back" data-target="3"><span class="material-symbols-outlined">arrow_back</span>Retour</button>
+      <button class="btn btn-primary nav-next" data-target="5">Étape suivante (Finalisation)<span class="material-symbols-outlined">arrow_forward</span></button>
+    </div>
+  </section>
+
+  <!-- ============================================================ -->
+  <!-- ÉTAPE 5 — FINALISATION                                        -->
+  <!-- ============================================================ -->
+  <section class="step" data-step="5">
+    <div style="display:flex; align-items:flex-start; justify-content:space-between; gap:16px; margin-bottom:24px; flex-wrap:wrap;">
+      <div style="min-width:0;">
+        <div class="eyebrow-row">
+          <span class="eyebrow">Étape 5 sur 5</span>
+          <span style="color:var(--on-surface-variant);">•</span>
+          <span class="eyebrow-dim">Prêt à l'emploi</span>
+        </div>
+        <h1 class="title">Finalisation &amp; Lancement</h1>
+        <p class="body-lg" style="margin-top:4px;">Votre environnement est configuré. Voici le récapitulatif réel de l'installation avant d'entrer dans Guyma Cyb.</p>
+      </div>
+      <span class="pill tertiary" id="final-badge" style="align-self:flex-start;">
+        <span class="material-symbols-outlined fill">check_circle</span>Configuration prête
+      </span>
+    </div>
+
+    <div class="grid-2-1">
+      <div class="card glow-blue">
+        <h3 class="sub" style="font-size:16px; margin-bottom:8px;">Récapitulatif de l'installation</h3>
+        <div id="summary-rows">
+          <div class="sum-row"><span class="k">Environnement WSL2</span><span class="v" id="sum-wsl">—</span></div>
+          <div class="sum-row"><span class="k">Allocation mémoire</span><span class="v" id="sum-ram">—</span></div>
+          <div class="sum-row"><span class="k">Mode réseau</span><span class="v" id="sum-net">—</span></div>
+          <div class="sum-row"><span class="k">Base SQLite</span><span class="v" id="sum-db">—</span></div>
+          <div class="sum-row"><span class="k">Outils vérifiés</span><span class="v" id="sum-tools">—</span></div>
+          <div class="sum-row"><span class="k">Démarrage automatique</span><span class="v" id="sum-autolaunch">—</span></div>
+        </div>
+        <div class="note-box" style="margin-top:16px;">
+          <span class="material-symbols-outlined">info</span>
+          <span>Vous pourrez relancer cet assistant à tout moment depuis « Core Manager » dans l'application.</span>
+        </div>
+      </div>
+      <div class="card" style="padding:16px; display:flex; flex-direction:column; gap:8px; justify-content:flex-end;">
+        <button class="btn btn-ghost" id="btn-later">Plus tard</button>
+        <button class="btn btn-tint" id="btn-enter" style="justify-content:center;">Entrer dans Guyma Cyb
+          <span class="material-symbols-outlined">arrow_forward</span>
+        </button>
+      </div>
+    </div>
+  </section>
+
 </div>
+</main>
 
 <script>
-const TOOLS = ['nmap','nikto','whatweb','aircrack-ng','airodump-ng','tshark','iperf3','dnsrecon','sslscan','sqlmap','gobuster','hashcat','searchsploit','metasploit-framework','reaver','macchanger'];
-let detected = { wsl: null, distros: [], tools: { available: [], missing: [] }, rust: null, node: true };
+/* ============================================================================
+   GUyma Cyb — Desktop Installer V2 (design maquettes, données 100% réelles)
+   Toute sortie dynamique passe par createElement/textContent (audit F1 :
+   aucune interpolation innerHTML de données IPC).
+   ============================================================================ */
+(function () {
+  'use strict';
 
-function setStep(n) {
-  document.querySelectorAll('.step-content').forEach(el => el.classList.remove('active'));
-  document.getElementById('step-' + n).classList.add('active');
-  for (let i = 1; i <= 4; i++) {
-    const pill = document.getElementById('pill-' + i);
-    pill.classList.remove('active', 'done');
-    if (i < n) pill.classList.add('done');
-    if (i === n) pill.classList.add('active');
-  }
-}
-let currentStep = 1;
-function goToStep(n) { currentStep = n; setStep(n); if (n === 2) detectWsl(); if (n === 3) detectTools(); if (n === 4) buildSummary(); }
-function setDot(id, state) {
-  const el = document.getElementById(id);
-  if (!el) return;
-  el.className = 'dot ' + state;
-}
-function setBadge(id, text, cls) {
-  const el = document.getElementById(id);
-  if (!el) return;
-  el.textContent = text;
-  el.className = 'badge ' + (cls || '');
-}
-function appendLog(id, line, cls) {
-  const el = document.getElementById(id);
-  if (!el) return;
-  el.style.display = 'block';
-  // textContent (audit SEC-AUDIT-1 — F1) : les lignes viennent de sorties
-  // réelles de wsl.exe/apt/powershell — jamais interpolées en HTML.
-  const span = document.createElement('span');
-  span.className = cls || '';
-  span.textContent = line;
-  el.appendChild(span);
-  el.appendChild(document.createTextNode('\n'));
-  el.scrollTop = el.scrollHeight;
-}
-function setSpinner(on) { document.getElementById('global-spinner').style.display = on ? 'flex' : 'none'; }
-function setFooterNote(t) { document.getElementById('footer-note').textContent = t; }
+  var ipc = window.guymacybSetup || null;
 
-// ---- Étape 2 : WSL — détection + proposition (jamais bloquant) ----
-let wslAutoAdvanced = false;
-async function detectWsl() {
-  setDot('wsl-dot', 'idle');
-  document.getElementById('wsl-status').textContent = 'Vérification de WSL…';
-  setBadge('wsl-badge', 'en cours', 'info');
-  document.getElementById('wsl-install-btn').style.display = 'none';
-  document.getElementById('wsl-proposal').style.display = 'none';
-  document.getElementById('step2-next').disabled = true;
-  setFooterNote('Vérification de WSL…');
-  try {
-    const r = await window.guymacybSetup.detectAll();
-    detected = r;
-    document.getElementById('step2-next').disabled = false; // jamais bloquant
-    if (r.wsl && r.wsl.available) {
-      // WSL déjà installé → on passe automatiquement à la suite.
-      setDot('wsl-dot', 'ok');
-      document.getElementById('wsl-status').textContent = 'WSL est déjà installé' + (r.wsl.defaultDistro ? ' — distro : ' + r.wsl.defaultDistro : '') + ' — passage à l\'étape suivante…';
-      setBadge('wsl-badge', 'OK', 'ok');
-      setFooterNote('WSL déjà installé — on continue');
-      if (!wslAutoAdvanced) {
-        wslAutoAdvanced = true;
-        setTimeout(() => { if (currentStep === 2) goToStep(3); }, 900);
-      }
-    } else if (r.isWindows) {
-      // WSL absent → PROPOSITION d'installation (pas d'installation automatique).
-      setDot('wsl-dot', 'warn');
-      document.getElementById('wsl-status').textContent = r.wsl && r.wsl.reason ? r.wsl.reason : 'WSL non détecté sur cette machine';
-      setBadge('wsl-badge', 'Non installé', 'warn');
-      document.getElementById('wsl-proposal').style.display = 'block';
-      document.getElementById('wsl-install-btn').style.display = 'inline-flex';
-      document.getElementById('wsl-install-btn').disabled = false;
-      setFooterNote('WSL non installé — installez-le (proposé) ou continuez sans');
-    } else {
-      setDot('wsl-dot', 'ok');
-      document.getElementById('wsl-status').textContent = 'Mode Linux natif — WSL non requis (outils exécutés directement)';
-      setBadge('wsl-badge', 'Natif', 'ok');
-      setFooterNote('Linux natif détecté — WSL inutile');
-      if (!wslAutoAdvanced) {
-        wslAutoAdvanced = true;
-        setTimeout(() => { if (currentStep === 2) goToStep(3); }, 900);
-      }
+  /* ——— État global (rempli uniquement par des détections réelles) ——— */
+  var state = {
+    step: 1,
+    eula: false,
+    sys: null,          /* { platform, cpuModel, cpuThreads, totalMemGb, freeMemGb } */
+    wsl: null,          /* { available, installed, defaultDistro, version, reason } */
+    tools: { available: [], missing: [] },
+    db: null,           /* { path, exists, sizeBytes, writable, endpointsCount, engine } */
+    config: { ramGb: 8, networkingMode: 'nat', encryptLogs: true },
+    installing: false
+  };
+
+  /* ——— Petit utilitaire IPC sûr (dégradation honnête hors Electron) ——— */
+  function call(fnName) {
+    var args = Array.prototype.slice.call(arguments, 1);
+    if (!ipc || typeof ipc[fnName] !== 'function') {
+      return Promise.resolve({ ipcUnavailable: true });
     }
-  } catch (e) {
-    setDot('wsl-dot', 'err');
-    document.getElementById('wsl-status').textContent = 'Erreur de vérification : ' + e.message;
-    setBadge('wsl-badge', 'Erreur', 'warn');
-    document.getElementById('step2-next').disabled = false;
-  }
-}
-
-async function installWsl() {
-  document.getElementById('wsl-install-btn').disabled = true;
-  setSpinner(true);
-  setFooterNote('Installation de WSL — une fenêtre UAC va s\'ouvrir…');
-  appendLog('wsl-log', '> wsl --install ( élévation UAC )', 'info');
-  const unsub = window.guymacybSetup.onProgress((line) => appendLog('wsl-log', line, ''));
-  try {
-    const r = await window.guymacybSetup.installWsl();
-    appendLog('wsl-log', r.exitCode === 0 ? '✓ WSL installé avec succès' : '⚠ terminé (code ' + r.exitCode + ')', r.exitCode === 0 ? 'ok' : 'err');
-    if (r.rebootRequired) appendLog('wsl-log', '⚠ Un redémarrage de Windows est requis pour activer WSL.', 'err');
-    setFooterNote(r.rebootRequired ? 'Redémarrage requis — relancez Guyma Cyb après' : 'WSL installé — redétection…');
-    setTimeout(() => detectWsl(), 1500);
-  } catch (e) {
-    appendLog('wsl-log', '✗ Erreur : ' + e.message, 'err');
-  } finally {
-    unsub && unsub();
-    setSpinner(false);
-  }
-}
-
-// ---- Étape 3 : Outils Linux ----
-async function detectTools() {
-  setDot('tools-dot', 'idle');
-  setBadge('tools-badge', 'en cours', 'info');
-  document.getElementById('tools-install-btn').disabled = true;
-  document.getElementById('step3-next').disabled = true;
-  setFooterNote('Détection des outils Linux…');
-  try {
-    if (!detected.wsl) {
-      const r = await window.guymacybSetup.detectAll();
-      detected = r;
+    try {
+      var p = ipc[fnName].apply(ipc, args);
+      return Promise.resolve(p).catch(function (e) { return { error: String((e && e.message) || e) }; });
+    } catch (e) {
+      return Promise.resolve({ error: String((e && e.message) || e) });
     }
-    renderToolsGrid();
-    const ok = detected.tools.available.length;
-    const miss = detected.tools.missing.length;
-    if (miss === 0) {
-      setDot('tools-dot', 'ok');
-      document.getElementById('tools-status').textContent = 'Tous les outils clés sont installés (' + ok + ')';
-      setBadge('tools-badge', 'Complet', 'ok');
-      document.getElementById('step3-next').disabled = false;
-      setFooterNote('Tous les outils sont installés');
-    } else {
-      setDot('tools-dot', 'warn');
-      document.getElementById('tools-status').textContent = miss + ' outil(s) manquant(s) sur ' + (ok + miss);
-      setBadge('tools-badge', miss + ' manquants', 'warn');
-      if (detected.wsl && detected.wsl.available) document.getElementById('tools-install-btn').disabled = false;
-      setFooterNote('Installez les outils manquants (sudo apt-get dans WSL)');
-    }
-    document.getElementById('step3-next').disabled = false;
-  } catch (e) {
-    setDot('tools-dot', 'err');
-    setFooterNote('Erreur : ' + e.message);
   }
-}
 
-function renderToolsGrid() {
-  const grid = document.getElementById('tools-grid');
-  grid.innerHTML = '';
-  TOOLS.forEach(t => {
-    const installed = detected.tools.available.includes(t);
-    const chip = document.createElement('div');
-    chip.className = 'tool-chip';
-    chip.innerHTML = '<span>' + t + '</span><span class="dot ' + (installed ? 'ok' : 'warn') + '"></span>';
-    grid.appendChild(chip);
+  /* ========================================================================
+     CONSOLE DE DIAGNOSTIC PARTAGÉE (les 3 terminaux affichent le même flux)
+     ======================================================================== */
+  var logListeners = [];
+  function onLog(fn) { logListeners.push(fn); }
+  function emitLog(tag, msg) {
+    logListeners.forEach(function (fn) { try { fn(tag, msg); } catch (e) { /* noop */ } });
+  }
+  function log(tag, msg) {
+    var time = new Date().toLocaleTimeString('fr-FR', { hour12: false });
+    emitLog(tag, '[' + time + '] ' + msg);
+  }
+  function wireTerminal(logsId, clearId) {
+    var box = document.getElementById(logsId);
+    if (!box) return;
+    var unsubscribe = onLog(function (tag, line) {
+      var row = document.createElement('div');
+      row.className = 'log-row';
+      var m = line.match(/^(\[[0-9:]+\])\s*(.*)$/);
+      var timeText = m ? m[1] : '';
+      var rest = m ? m[2] : line;
+      var tEl = document.createElement('span'); tEl.className = 't'; tEl.textContent = timeText;
+      var tagEl = document.createElement('span'); tagEl.className = 'tag ' + tag; tagEl.textContent = '[' + tag + ']';
+      var msgEl = document.createElement('span'); msgEl.className = 'msg'; msgEl.textContent = rest;
+      row.appendChild(tEl); row.appendChild(tagEl); row.appendChild(msgEl);
+      box.appendChild(row);
+      while (box.childNodes.length > 400) box.removeChild(box.firstChild);
+      box.scrollTop = box.scrollHeight;
+    });
+    var clearBtn = document.getElementById(clearId);
+    if (clearBtn) clearBtn.addEventListener('click', function () {
+      while (box.firstChild) box.removeChild(box.firstChild);
+      var row = document.createElement('div');
+      row.className = 'log-row';
+      var i = document.createElement('span'); i.className = 'msg'; i.style.fontStyle = 'italic'; i.textContent = 'Console effacée.';
+      row.appendChild(i); box.appendChild(row);
+    });
+  }
+  wireTerminal('terminal-logs', 'terminal-clear');
+  wireTerminal('terminal-logs-2', 'terminal-clear-2');
+  wireTerminal('terminal-logs-3', 'terminal-clear-3');
+
+  /* ========================================================================
+     NAVIGATION ENTRE ÉTAPES
+     ======================================================================== */
+  function setStep(n) {
+    state.step = n;
+    var sections = document.querySelectorAll('.step');
+    for (var i = 0; i < sections.length; i++) {
+      sections[i].classList.toggle('active', Number(sections[i].getAttribute('data-step')) === n);
+    }
+    var items = document.querySelectorAll('#nav .nav-item');
+    for (var j = 0; j < items.length; j++) {
+      items[j].classList.toggle('active', Number(items[j].getAttribute('data-step')) === n);
+    }
+    main.scrollTop = 0;
+    if (n === 4) refreshToolsGrid();
+    if (n === 5) refreshSummary();
+  }
+  var main = document.querySelector('main');
+
+  var navItems = document.querySelectorAll('#nav .nav-item');
+  for (var ni = 0; ni < navItems.length; ni++) {
+    (function (btn) {
+      btn.addEventListener('click', function () { setStep(Number(btn.getAttribute('data-step'))); });
+    })(navItems[ni]);
+  }
+  var backs = document.querySelectorAll('.nav-back');
+  for (var bi = 0; bi < backs.length; bi++) {
+    (function (btn) { btn.addEventListener('click', function () { setStep(Number(btn.getAttribute('data-target'))); }); })(backs[bi]);
+  }
+  var nexts = document.querySelectorAll('.nav-next');
+  for (var fi = 0; fi < nexts.length; fi++) {
+    (function (btn) { btn.addEventListener('click', function () { setStep(Number(btn.getAttribute('data-target'))); }); })(nexts[fi]);
+  }
+
+  /* ========================================================================
+     CONTRÔLES DE FENÊTRE (frameless)
+     ======================================================================== */
+  document.getElementById('win-min').addEventListener('click', function () { call('minimizeWindow'); });
+  document.getElementById('win-max').addEventListener('click', function () { call('maximizeWindow'); });
+  document.getElementById('win-close').addEventListener('click', function () { call('closeWindow'); });
+
+  /* ========================================================================
+   * ÉTAPE 1 — EULA + Vérification système réelle
+     ======================================================================== */
+  var eulaBox = document.getElementById('eula-checkbox');
+  var btnStart = document.getElementById('btn-start');
+  eulaBox.addEventListener('change', function () {
+    state.eula = eulaBox.checked;
+    btnStart.disabled = !eulaBox.checked;
+    log('CONFIG', eulaBox.checked ? 'EULA acceptée par l\'opérateur.' : 'Acceptation EULA retirée.');
   });
-}
+  btnStart.addEventListener('click', function () {
+    if (!state.eula) return;
+    log('INFO', 'Démarrage de la configuration de l\'environnement…');
+    setStep(2);
+  });
+  document.getElementById('btn-cancel').addEventListener('click', function () {
+    log('WARN', 'Installation annulée par l\'opérateur — poursuite vers Guyma Cyb (assistant réouvrable depuis Core Manager).');
+    call('skipWizard');
+  });
 
-async function installTools() {
-  document.getElementById('tools-install-btn').disabled = true;
-  setSpinner(true);
-  setFooterNote('Installation des outils dans WSL (sudo apt-get)…');
-  appendLog('tools-log', '> sudo apt-get update && apt-get install -y nmap aircrack-ng nikto hashcat …', 'info');
-  const unsub = window.guymacybSetup.onProgress((line) => appendLog('tools-log', line, ''));
-  try {
-    const r = await window.guymacybSetup.installTools();
-    appendLog('tools-log', r.exitCode === 0 ? '✓ Installation terminée' : '⚠ terminé (code ' + r.exitCode + ')', r.exitCode === 0 ? 'ok' : 'err');
-    setFooterNote('Outils installés — redétection…');
-    setTimeout(() => detectTools(), 1500);
-  } catch (e) {
-    appendLog('tools-log', '✗ Erreur : ' + e.message, 'err');
-  } finally {
-    unsub && unsub();
-    setSpinner(false);
-  }
-}
-
-// ---- Étape 4 : Récapitulatif ----
-// DOM construit avec createElement/textContent (audit SEC-AUDIT-1 — F1) :
-// detected.wsl.defaultDistro provient de la sortie réelle de wsl.exe —
-// jamais interpolée via innerHTML.
-function buildSummary() {
-  const card = document.getElementById('summary-card');
-  card.textContent = '';
-  function statusLine(dotCls, labelText, badgeCls, badgeText) {
-    const line = document.createElement('div');
-    line.className = 'status-line';
-    line.style.marginBottom = '10px';
-    const dot = document.createElement('span');
-    dot.className = 'dot ' + dotCls;
-    line.appendChild(dot);
-    line.appendChild(document.createTextNode(labelText + ' '));
-    if (badgeCls && badgeText) {
-      const badge = document.createElement('span');
-      badge.className = 'badge ' + badgeCls;
-      badge.textContent = badgeText;
-      line.appendChild(badge);
+  /* ——— Installation WSL + distro en un clic (élévation UAC, réel) ——— */
+  var btnInstallWsl = document.getElementById('btn-install-wsl');
+  btnInstallWsl.addEventListener('click', function () {
+    if (state.installing) return;
+    state.installing = true;
+    btnInstallWsl.disabled = true;
+    log('INFO', 'Installation de WSL2 + distribution Ubuntu (élévation UAC requise, 5 à 15 min selon la connexion)…');
+    var unsub = null;
+    if (ipc && typeof ipc.onProgress === 'function') {
+      unsub = ipc.onProgress(function (line) {
+        var s = String(line);
+        log(s.indexOf('error', 0) >= 0 ? 'ERROR' : 'INFO', s.length > 300 ? s.slice(0, 300) + '…' : s);
+      });
     }
-    card.appendChild(line);
+    call('installWsl').then(function (r) {
+      state.installing = false;
+      if (unsub) { try { unsub(); } catch (e) { /* noop */ } }
+      if (r && r.ipcUnavailable) {
+        log('WARN', 'Canal IPC indisponible — ouvrez l\'assistant depuis Guyma Cyb Desktop.');
+      } else if (r && r.error) {
+        log('ERROR', 'Échec de l\'installation WSL : ' + r.error);
+      } else {
+        log('SUCCESS', 'Installation WSL terminée (exit ' + (r && r.exitCode) + '). Nouvelle détection…');
+      }
+      return runDetection(true);
+    }).then(function () {
+      btnInstallWsl.disabled = false;
+    });
+  });
+
+  function setCheck(idEl, idIc, ok, okLabel, koLabel) {
+    var el = document.getElementById(idEl);
+    var ic = document.getElementById(idIc);
+    if (!el || !ic) return;
+    while (el.firstChild) el.removeChild(el.firstChild);
+    el.textContent = ok ? okLabel : koLabel;
+    ic.textContent = ok ? 'check_circle' : 'error';
+    ic.className = 'material-symbols-outlined fill ' + (ok ? 'ok' : 'ko');
+    ic.style.color = ok ? 'var(--tertiary)' : 'var(--amber)';
   }
-  if (detected.wsl && detected.wsl.available) {
-    statusLine('ok', 'WSL / Environnement Linux', 'ok', 'Installé' + (detected.wsl.defaultDistro ? ' — ' + detected.wsl.defaultDistro : ''));
-  } else {
-    statusLine('ok', 'WSL / Environnement Linux', detected.isWindows ? 'warn' : 'info', detected.isWindows ? 'Non installé' : 'Linux natif');
+
+  function refreshSystemChecks() {
+    var sys = state.sys;
+    if (sys && !sys.error) {
+      var freeGb = (sys.freeMemGb || 0).toFixed(1).replace('.', ',');
+      var totalGb = (sys.totalMemGb || 0).toFixed(0);
+      var ramOk = sys.totalMemGb >= 8;
+      setCheck('check-ram', 'check-ram-ic', ramOk,
+        freeGb + ' Go libres / ' + totalGb + ' Go installés — 8 Go Recommandés',
+        freeGb + ' Go libres / ' + totalGb + ' Go installés — 8 Go Recommandés');
+      var cpuOk = sys.cpuThreads >= 4;
+      setCheck('check-cpu', 'check-cpu-ic', cpuOk,
+        sys.cpuThreads + ' Threads compatibles AVX2',
+        sys.cpuThreads + ' Threads — 4+ Recommandés');
+    } else {
+      setCheck('check-ram', 'check-ram-ic', false, '—', 'Inventaire matériel indisponible');
+      setCheck('check-cpu', 'check-cpu-ic', false, '—', 'Inventaire matériel indisponible');
+    }
+    var wsl = state.wsl;
+    var wslOk = Boolean(wsl && wsl.available);
+    var wslDetail = wslOk
+      ? ((wsl.defaultDistro || 'Ubuntu') + (wsl.version ? ' ' + wsl.version : '') + ' — prêt')
+      : (wsl && wsl.installed ? 'WSL présent — aucune distribution Linux enregistrée' : 'Non détecté — installation requise');
+    setCheck('check-wsl', 'check-wsl-ic', wslOk, wslDetail, wslDetail);
+    var globalBadge = document.getElementById('sys-global-badge');
+    var allOk = ramOkSafe() && cpuOkSafe() && wslOk;
+    globalBadge.textContent = allOk ? 'Optimal' : 'Action requise';
+    globalBadge.className = allOk ? 'tag tertiary' : 'tag amber';
+    function ramOkSafe() { return Boolean(sys && !sys.error && sys.totalMemGb >= 8); }
+    function cpuOkSafe() { return Boolean(sys && !sys.error && sys.cpuThreads >= 4); }
   }
-  const toolsOk = detected.tools.available.length;
-  const toolsMiss = detected.tools.missing.length;
-  statusLine(toolsMiss === 0 ? 'ok' : 'warn', 'Outils Linux : ' + toolsOk + ' installés, ' + toolsMiss + ' manquants');
-  statusLine('ok', 'Noyau scan :', detected.rust ? 'ok' : 'info', detected.rust ? 'Rust présent' : 'Fallback Node (réel)');
-  statusLine('ok', 'Runtime Node ' + detected.node);
-  setFooterNote('Configuration terminée — vous pouvez lancer Guyma Cyb');
-}
 
-async function launchApp() {
-  setSpinner(true);
-  setFooterNote('Démarrage de Guyma Cyb…');
-  try { await window.guymacybSetup.launchApp(); } catch (e) { setFooterNote('Erreur : ' + e.message); }
-}
+  /* ========================================================================
+   * ÉTAPE 2 — WSL2 + SQLite + persistance de configuration
+     ======================================================================== */
+  var ramSlider = document.getElementById('ram-slider');
+  var ramValue = document.getElementById('ram-value');
+  var saveTimer = null;
+  ramSlider.addEventListener('input', function () {
+    state.config.ramGb = Number(ramSlider.value);
+    ramValue.textContent = ramSlider.value + ' GB';
+    if (saveTimer) clearTimeout(saveTimer);
+    saveTimer = setTimeout(persistConfig, 500);
+  });
+  ramSlider.addEventListener('change', function () {
+    log('CONFIG', 'Allocation mémoire WSL2 réglée sur ' + ramSlider.value + ' GB.');
+  });
 
-async function skipWizard() {
-  setFooterNote('Configuration reportée — lancement direct…');
-  try { await window.guymacybSetup.skipWizard(); } catch (e) { setFooterNote('Erreur : ' + e.message); }
-}
+  function setNetMode(mode) {
+    state.config.networkingMode = mode;
+    document.getElementById('net-nat').classList.toggle('active', mode === 'nat');
+    document.getElementById('net-bridged').classList.toggle('active', mode === 'bridged');
+    persistConfig();
+    log('CONFIG', 'Network bridging mode switched to: ' + mode.toUpperCase());
+  }
+  document.getElementById('net-nat').addEventListener('click', function () { setNetMode('nat'); });
+  document.getElementById('net-bridged').addEventListener('click', function () { setNetMode('bridged'); });
 
-setStep(1);
-// Détection initiale au chargement pour pré-remplir
-window.guymacybSetup.detectAll().then(r => { detected = r; }).catch(() => {});
+  document.getElementById('autolaunch-toggle').addEventListener('change', function (e) {
+    var on = e.target.checked;
+    call('setAutoLaunch', on).then(function (r) {
+      if (r && r.ipcUnavailable) { log('WARN', 'Canal IPC indisponible — préférence non persistée.'); return; }
+      log('CONFIG', 'Lancement automatique au démarrage Windows : ' + (on ? 'ACTIVÉ' : 'DÉSACTIVÉ') + (r && r.ok ? '' : ' (échec de persistance)'));
+    });
+  });
+  document.getElementById('encrypt-toggle').addEventListener('change', function (e) {
+    state.config.encryptLogs = e.target.checked;
+    log('CONFIG', 'Préférence de chiffrement des journaux : ' + (e.target.checked ? 'ACTIVÉE' : 'DÉSACTIVÉE'));
+    persistConfig();
+  });
+
+  function persistConfig() {
+    call('saveConfig', {
+      ramGb: state.config.ramGb,
+      networkingMode: state.config.networkingMode,
+      encryptLogs: state.config.encryptLogs
+    }).then(function (r) {
+      if (r && r.ipcUnavailable) return;
+      if (r && r.error) { log('ERROR', 'Persistance de configuration impossible : ' + r.error); return; }
+      if (r && r.wslConfigWritten === false && r.reason) {
+        log('INFO', '.wslconfig non écrit : ' + r.reason);
+      } else if (r && r.wslConfigPath) {
+        log('SUCCESS', 'Configuration écrite : ' + r.wslConfigPath + ' (mémoire ' + state.config.ramGb + ' GB, mode ' + state.config.networkingMode.toUpperCase() + ').');
+      }
+    });
+  }
+
+  function refreshStep2() {
+    var wsl = state.wsl;
+    var ok = Boolean(wsl && wsl.available);
+    var distroLabel = ok ? ((wsl.defaultDistro || 'Ubuntu') + (wsl.version ? ' ' + wsl.version : '')) : 'Ubuntu';
+    document.getElementById('wsl-card-title').textContent = 'Noyau WSL2 (' + distroLabel + ' LTS)';
+    var badge = document.getElementById('wsl-card-badge');
+    badge.textContent = ok ? 'Détecté & Prêt' : (wsl && wsl.installed ? 'Aucun distro — installation requise' : 'Non détecté');
+    badge.className = ok ? 'tag tertiary' : 'tag amber';
+    var g = document.getElementById('step2-global-badge');
+    g.className = 'pill ' + (ok ? 'tertiary' : 'amber');
+    while (g.firstChild) g.removeChild(g.firstChild);
+    var ic = document.createElement('span'); ic.className = 'material-symbols-outlined fill'; ic.textContent = ok ? 'check_circle' : 'warning';
+    g.appendChild(ic);
+    g.appendChild(document.createTextNode(ok ? 'Système Opérationnel' : 'WSL requis'));
+    btnInstallWsl.style.display = ok ? 'none' : 'inline-flex';
+    btnInstallWsl.disabled = state.installing;
+    if (state.db && state.db.path) {
+      document.getElementById('db-path').textContent = state.db.path;
+    }
+    refreshEndpointsCount();
+  }
+
+  function refreshEndpointsCount() {
+    var el = document.getElementById('db-endpoints');
+    var n = state.db && typeof state.db.endpointsCount === 'number' ? state.db.endpointsCount : null;
+    el.textContent = (n === null ? '—' : String(n)) + ' Endpoints indexés';
+  }
+
+  /* ========================================================================
+   * ÉTAPE 3 — Initialisation réelle de la base
+     ======================================================================== */
+  document.getElementById('btn-init-db').addEventListener('click', function () {
+    var btn = this;
+    btn.disabled = true;
+    log('INFO', 'Initialisation du schéma SQLite (targets, scans, endpoints, findings, audit_logs)…');
+    call('initDb').then(function (r) {
+      btn.disabled = false;
+      if (!r || r.ipcUnavailable) {
+        log('WARN', 'Canal IPC indisponible — ouvrez l\'assistant depuis Guyma Cyb Desktop.');
+        return;
+      }
+      if (r.error) { log('ERROR', 'Échec de l\'initialisation : ' + r.error); return; }
+      if (r.initialized) {
+        log('SUCCESS', 'Base initialisée à ' + r.path + (typeof r.sizeBytes === 'number' ? ' (' + formatSize(r.sizeBytes) + ')' : '') + '.');
+        document.getElementById('db-badge').textContent = 'Opérationnelle';
+        document.getElementById('db-badge').className = 'tag tertiary';
+      } else {
+        log('WARN', 'Base non initialisée : ' + (r.reason || 'raison inconnue') + ' — elle sera créée automatiquement au premier lancement du moteur.');
+        document.getElementById('db-badge').textContent = 'En attente du moteur';
+        document.getElementById('db-badge').className = 'tag amber';
+      }
+      if (r.counters) applyCounters(r.counters);
+      refreshDbCards(r);
+    });
+  });
+
+  function applyCounters(c) {
+    var map = { 'cnt-targets': 'targets', 'cnt-scans': 'scans', 'cnt-endpoints': 'endpoints', 'cnt-findings': 'findings', 'cnt-audit': 'audit_logs' };
+    Object.keys(map).forEach(function (id) {
+      var el = document.getElementById(id);
+      if (el && typeof c[map[id]] === 'number') el.textContent = String(c[map[id]]);
+    });
+    if (typeof c.endpoints === 'number' && state.db) state.db.endpointsCount = c.endpoints;
+    refreshEndpointsCount();
+  }
+
+  function refreshDbCards(r) {
+    if (r.path) document.getElementById('init-db-path').textContent = r.path;
+    if (typeof r.sizeBytes === 'number') document.getElementById('init-db-size').textContent = formatSize(r.sizeBytes);
+    if (typeof r.writable === 'boolean') document.getElementById('init-db-writable').textContent = r.writable ? 'OK — répertoire accessible en écriture' : 'REFUSÉ — vérifiez les permissions';
+  }
+
+  function formatSize(bytes) {
+    if (!bytes && bytes !== 0) return '—';
+    if (bytes < 1024) return bytes + ' o';
+    if (bytes < 1024 * 1024) return (bytes / 1024).toFixed(1) + ' Kio';
+    return (bytes / (1024 * 1024)).toFixed(1) + ' Mio';
+  }
+
+  /* ========================================================================
+   * ÉTAPE 4 — Outils réels (grille + installation apt)
+     ======================================================================== */
+  function refreshToolsGrid() {
+    var grid = document.getElementById('tools-grid');
+    while (grid.firstChild) grid.removeChild(grid.firstChild);
+    var av = state.tools.available || [];
+    var miss = state.tools.missing || [];
+    var total = av.length + miss.length;
+    document.getElementById('tools-subtitle').textContent =
+      total > 0 ? (av.length + ' outils vérifiés sur ' + total + ' détectés dans le distro WSL2') : 'Aucun outil détecté — WSL2 requis';
+    var badge = document.getElementById('tools-badge');
+    badge.textContent = total > 0 ? (av.length + ' vérifiés · ' + miss.length + ' manquants') : 'WSL requis';
+    badge.className = total > 0 ? (miss.length === 0 ? 'tag tertiary' : 'tag amber') : 'tag amber';
+
+    function chip(name, ok) {
+      var div = document.createElement('div');
+      div.className = 'tool-chip ' + (ok ? 'ok' : 'missing');
+      var ic = document.createElement('span');
+      ic.className = 'material-symbols-outlined' + (ok ? ' fill' : '');
+      ic.textContent = ok ? 'check_circle' : 'add_circle';
+      var lbl = document.createElement('span');
+      lbl.textContent = name;
+      div.appendChild(ic); div.appendChild(lbl);
+      return div;
+    }
+    av.forEach(function (t) { grid.appendChild(chip(t, true)); });
+    miss.forEach(function (t) { grid.appendChild(chip(t, false)); });
+    var btn = document.getElementById('btn-install-tools');
+    btn.disabled = state.installing || miss.length === 0 || !state.wsl || !state.wsl.available;
+    btn.title = miss.length === 0 ? 'Tous les outils détectés sont vérifiés' : 'Installe ' + miss.length + ' outil(s) via apt dans la distribution WSL2';
+  }
+
+  document.getElementById('btn-install-tools').addEventListener('click', function () {
+    if (state.installing) return;
+    state.installing = true;
+    var btn = this; btn.disabled = true;
+    log('INFO', 'Installation apt des outils manquants dans la distribution WSL2 (cela peut prendre plusieurs minutes)…');
+    var unsub = null;
+    if (ipc && typeof ipc.onProgress === 'function') {
+      unsub = ipc.onProgress(function (line) {
+        var s = String(line);
+        var tag = s.indexOf('error', 0) >= 0 || s.indexOf('E:', 0) >= 0 ? 'ERROR' : 'INFO';
+        log(tag, s.length > 300 ? s.slice(0, 300) + '…' : s);
+      });
+    }
+    call('installTools').then(function (r) {
+      state.installing = false;
+      if (unsub) { try { unsub(); } catch (e) { /* noop */ } }
+      if (!r || r.ipcUnavailable) {
+        log('WARN', 'Canal IPC indisponible — utilisez Guyma Cyb Desktop pour installer les outils.');
+        refreshToolsGrid();
+        return;
+      }
+      if (r.error) {
+        log('ERROR', 'Échec de l\'installation : ' + r.error);
+      } else if (r.verification) {
+        log('SUCCESS', 'Installation terminée (exit ' + r.exitCode + '). Vérifiés : ' + r.verification.verified.length + ' — absents : ' + (r.verification.absent.length ? r.verification.absent.join(', ') : 'aucun') + '.');
+      } else {
+        log('SUCCESS', 'Installation terminée (exit ' + r.exitCode + ').');
+      }
+      return runDetection(false).then(function () {
+        btn.disabled = false;
+        refreshToolsGrid();
+      });
+    });
+  });
+
+  /* ========================================================================
+   * ÉTAPE 5 — Récapitulatif + entrée dans l'application
+     ======================================================================== */
+  function refreshSummary() {
+    var wsl = state.wsl;
+    document.getElementById('sum-wsl').textContent =
+      wsl && wsl.available ? ((wsl.defaultDistro || 'Ubuntu') + (wsl.version ? ' ' + wsl.version : '') + ' — opérationnel') : 'Non opérationnel (les scans de base restent disponibles)';
+    document.getElementById('sum-ram').textContent = state.config.ramGb + ' GB (.wslconfig)';
+    document.getElementById('sum-net').textContent = state.config.networkingMode === 'nat' ? 'NAT (isolation du sous-réseau virtuel)' : 'Bridged (pont vers le réseau hôte)';
+    document.getElementById('sum-db').textContent = state.db && state.db.path ? state.db.path + (typeof state.db.sizeBytes === 'number' && state.db.sizeBytes > 0 ? ' (' + formatSize(state.db.sizeBytes) + ')' : '') : '—';
+    var av = (state.tools.available || []).length;
+    var miss = (state.tools.missing || []).length;
+    document.getElementById('sum-tools').textContent = (av + miss) > 0 ? (av + ' / ' + (av + miss) + ' — ' + (miss === 0 ? 'arsenal complet' : miss + ' manquant(s)')) : 'Aucun outil détecté';
+    document.getElementById('sum-autolaunch').textContent = document.getElementById('autolaunch-toggle').checked ? 'Activé' : 'Désactivé';
+  }
+
+  document.getElementById('btn-enter').addEventListener('click', function () {
+    log('INFO', 'Sauvegarde de la configuration finale…');
+    persistConfig();
+    log('READY', 'Entrée dans Guyma Cyb — lancement de l\'application principale.');
+    call('launchApp');
+  });
+  document.getElementById('btn-later').addEventListener('click', function () {
+    log('INFO', 'Configuration reportée — l\'assistant restera accessible depuis Core Manager.');
+    call('skipWizard');
+  });
+
+  /* ========================================================================
+   * DÉTECTION INITIALE (réelle, journalisée)
+     ======================================================================== */
+  function runDetection(verbose) {
+    return call('detectAll').then(function (det) {
+      if (det && det.ipcUnavailable) {
+        state.wsl = { available: false, installed: false, reason: 'IPC indisponible (aperçu hors Electron)' };
+        state.tools = { available: [], missing: [] };
+        if (verbose) log('WARN', 'Interface IPC non disponible — mode aperçu du design, aucune donnée réelle.');
+        refreshSystemChecks(); refreshStep2(); refreshToolsGrid();
+        return;
+      }
+      if (det && det.error) {
+        state.wsl = { available: false, installed: false, reason: det.error };
+        if (verbose) log('ERROR', 'Détection impossible : ' + det.error);
+      } else if (det) {
+        state.wsl = det.wsl || { available: false, installed: false };
+        state.tools = det.tools || { available: [], missing: [] };
+        if (verbose) {
+          log('INFO', 'Checking WSL2 virtualization backend and kernel version…');
+          if (state.wsl.available) {
+            log('SUCCESS', 'Distribution ' + (state.wsl.defaultDistro || 'Ubuntu') + (state.wsl.version ? ' ' + state.wsl.version : '') + ' found and verified.');
+          } else if (state.wsl.installed) {
+            log('WARN', 'WSL est installé mais aucune distribution Linux n\'est enregistrée — installation d\'Ubuntu requise (étape 2).');
+          } else {
+            log('WARN', 'WSL2 non détecté : ' + (state.wsl.reason || 'raison inconnue') + ' — installation requise.');
+          }
+        }
+      }
+      refreshSystemChecks(); refreshStep2(); refreshToolsGrid();
+    });
+  }
+
+  function detectSystemInfo() {
+    return call('getSystem').then(function (sys) {
+      if (sys && !sys.ipcUnavailable && !sys.error) state.sys = sys;
+      else state.sys = { error: (sys && sys.error) || 'indisponible' };
+      refreshSystemChecks();
+    });
+  }
+
+  function detectDatabase(verbose) {
+    return call('getDbStatus').then(function (db) {
+      if (db && !db.ipcUnavailable && !db.error) {
+        state.db = db;
+        if (verbose) {
+          log('INFO', 'Initializing local SQLite storage engine with PRAGMA cipher…');
+          if (db.engine === 'server') {
+            log('SUCCESS', 'SQLite database ready at ' + db.path + ' (' + (typeof db.endpointsCount === 'number' ? db.endpointsCount : 0) + ' nodes indexed).');
+          } else if (db.writable) {
+            log('SUCCESS', 'Répertoire de base prêt : ' + db.path + ' — le schéma sera créé au premier lancement du moteur.');
+          } else {
+            log('WARN', 'Répertoire de base non accessible en écriture : ' + db.path);
+          }
+        }
+        if (db.counters) applyCounters(db.counters);
+        refreshDbCards(db);
+      } else if (verbose) {
+        log('WARN', 'État de la base indisponible : ' + ((db && db.error) || 'IPC indisponible'));
+      }
+      refreshStep2();
+    });
+  }
+
+  /* ——— Séquence de démarrage ——— */
+  setStep(1);
+  log('READY', 'Guyma Cyb Desktop Installer v2.0 — console de diagnostic initialisée.');
+  log('INFO', 'Checking WSL2 virtualization backend and kernel version…');
+  Promise.all([runDetection(true), detectSystemInfo()]).then(function () {
+    return detectDatabase(true);
+  }).then(function () {
+    log('READY', 'Daemon ready. Awaiting user navigation.');
+  });
+})();
 </script>
 </body>
 </html>

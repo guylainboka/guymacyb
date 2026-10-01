@@ -127,7 +127,7 @@ export const Header: React.FC<HeaderProps> = ({
         <div className="flex items-center gap-2">
           <ShadowScanLogo size={18} />
           <span className="font-mono text-xs text-[#dfe2f1] font-medium tracking-tight">
-            Guyma Cyb Desktop v1.0.0 - Enterprise Security Assessment Engine
+            Guyma Cyb Desktop v2.0.0 - Enterprise Security Assessment Engine
           </span>
           <div className="flex items-center gap-1.5 px-2 py-0.5 bg-[#171b26] rounded text-[#c2c6d6] font-mono text-[11px] border border-[#262a35]">
             <span className="inline-block w-1.5 h-1.5 rounded-full bg-[#4cd7f6] animate-pulse"></span>

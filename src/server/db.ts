@@ -157,6 +157,9 @@ export function saveDatabaseToDisk(db?: Database) {
     if (!targetDb) return;
     const data = targetDb.export();
     const buffer = Buffer.from(data);
+    // Bug V2 : si le dossier parent n'existe pas encore (chemin personnalisé
+    // GCYB_DB_PATH, premier lancement), writeFileSync échouait en silence.
+    fs.mkdirSync(path.dirname(DB_FILE_PATH), { recursive: true });
     fs.writeFileSync(DB_FILE_PATH, buffer);
   } catch (err) {
     console.error('Error saving SQLite database to disk:', err);
