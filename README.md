@@ -37,7 +37,7 @@ Les 4 phases, toutes commitées et vérifiables dans l'historique git :
 | Phase | Commit | Contenu |
 |---|---|---|
 | **0 — Vrai logiciel** | `2f652ac` | Suppression de `mockSecurityData.ts` (515 lignes de données fictives), du seed de 3 cibles fictives, de la télémétrie `Math.random` — l'app démarre **vide et honnête** ; les données n'apparaissent qu'après un vrai scan. Wizard WSL non bloquant, packaging réparé (`Cannot find module 'vite'` en prod). |
-| **1 — Zéro simulation** | `71821aa` | Les 9 derniers résidus de simulation éliminés (faux réseaux WiFi, faux findings du lab, IDs séquentiels réels, durées mesurées avec `Date.now()`, CVSS théorique assumé comme tel). Audit complet dans `AUDIT-SIMULATIONS.md`. |
+| **1 — Zéro simulation** | `71821aa` | Les 9 derniers résidus de simulation éliminés (faux réseaux WiFi, faux findings du lab, IDs séquentiels réels, durées mesurées avec `Date.now()`, CVSS théorique assumé comme tel). Audit complet dans `docs/AUDIT-SIMULATIONS.md`. |
 | **2 — Moteur 100 % réel** | `570e084` | Le labo web envoie de **vraies sondes** (SQLi, XSS, path traversal, SSRF, IDOR, JWT alg=none, rate-limiting, CORS) contre la vraie cible ; **suite de tests actifs réels** (8 familles + fuzzing 35 chemins + nikto réel) ; **re-test réel** de chaque finding (`CONFIRMED/RESOLVED`) ; attestation légale **ACTIVE/DESTRUCTIVE** vérifiée mot pour mot côté serveur ; endpoints WiFi factices → `410 Gone`. |
 | **3 — Durcissement** | `49e7078` | Attestation légale étendue à **6 outils WiFi réels** (monitor, handshake, crack, WPS, Evil Twin, MAC changer) ; **calculateur CVSS v3.1 vectoriel conforme FIRST** (base + temporel + environnemental, colonne `cvss_vector` en base) ; **Evil Twin réel automatisé** (hostapd + dnsmasq). |
 
@@ -234,6 +234,40 @@ node desktop/signing/generate-cert.cjs MonMotDePasse
 Pour la confiance SmartScreen, achetez un cert OV/EV (DigiCert/Sectigo) ou utilisez
 Azure Trusted Signing / SignPath (gratuit OSS). Voir `desktop/signing/README.md`.
 
+## 🛡️ Sécurité de l'application (audit SEC-AUDIT-1)
+
+L'application elle-même est durcie selon les recommandations Electron et le résultat
+d'un audit de sécurité statique complet (constats H1/M1-M6/F1-F4 corrigés) :
+
+- **Serveur local uniquement** : Express écoute sur `127.0.0.1` (jamais `0.0.0.0`).
+- **Contrôle d'accès en 3 couches** (anti DNS-rebinding / anti drive-by CSRF) :
+  1. En-tête `Host` strictement local — un domaine rebondi vers 127.0.0.1 est rejeté 403 ;
+  2. `Origin`/`Referer` strictement locaux si présents ;
+  3. **Jeton de session** généré par le processus principal à chaque démarrage
+     (`GCYB_SESSION_TOKEN`), transmis au renderer via l'URL de charge, converti en
+     cookie `HttpOnly` + `SameSite=Strict` exigé sur toutes les routes `/api/*`
+     (sauf `/api/health`). Une page web distante ne peut ni lire ni piloter l'API.
+- **CSP** en production (`script-src 'self'`, `frame-ancestors 'none'`, …) + CSP stricte
+  (`connect-src 'none'`) sur le wizard, qui ne fait aucun appel réseau (IPC uniquement).
+- **Electron** : `nodeIntegration: false`, `contextIsolation: true`, sandbox activé sur
+  les deux fenêtres, `setWindowOpenHandler` + garde `will-navigate` (aucune navigation
+  hors du serveur local), preloads minimaux sans argument arbitraire.
+- **Endpoints outils directs supprimés** : `/api/tools/{nmap,nikto,whatweb,dirbrute,…}`
+  (12 routes) ne sont plus appelables — ils contournaient le modèle d'attestation
+  légale. Tout parcours actif passe par les flux attestés (`ACTIVE`/`DESTRUCTIVE`,
+  texte exact vérifié côté serveur, journalisation immuable).
+- **Terminal** : filtre indicatif des commandes catastrophiques (`rm -rf /`, fork bomb,
+  `mkfs`, `dd of=/dev/*`, `format`, `Remove-Item -Recurse -Force C:\*`…). Le terminal
+  reste par conception un shell complet — la vraie frontière est le contrôle d'accès
+  ci-dessus, pas la liste noire.
+- **Dépendances** : `npm audit --omit=dev` = 0 vulnérabilité (esbuild aligné sur le peer
+  requis par Vite 8 — conflit ERESOLVE corrigé).
+
+**Compromis documenté (connu)** : les outils installés dans WSL tournent en `root`
+(apt, airmon-ng, hashcat l'exigent) — l'environnement WSL est isolé de l'hôte Windows
+mais `/mnt/c` reste monté. Un durcissement supplémentaire (utilisateur dédié +
+allowlist sudoers) est envisagé pour une version ultérieure.
+
 ## 🔒 Principes défensifs & pas de simulation
 
 - Toute sonde réseau réelle exige une **attestation légale** (modale obligatoire,
@@ -317,7 +351,7 @@ Pour le scan WiFi temps réel : branchez une **clé USB WiFi mode monitor**
 
 ## 📖 Documentation
 
-- `AUDIT-SIMULATIONS.md` — audit complet de la doctrine « zéro simulation » (47 points corrigés)
+- `docs/AUDIT-SIMULATIONS.md` — audit complet de la doctrine « zéro simulation » (47 points corrigés)
 - `desktop/signing/README.md` — signature Authenticode détaillée
 - `desktop/README.md` — packaging Electron
 - `security-scripts/install-tools.sh --check` — vérifier les outils installés

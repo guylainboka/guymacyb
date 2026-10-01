@@ -29,6 +29,15 @@ source "$SCRIPT_DIR/lib/common.sh"
 ACTION="${1:-}"
 PROFILE="${2:-}"
 
+# Audit SEC-AUDIT-1 (F3) : ACTION/PROFILE sont interpolés dans un heredoc JSON
+# ci-dessous — on neutralise tout caractère qui casserait le JSON (quotes,
+# backslashes, retours ligne). Le parsing reste strict côté Node.
+safe_json() {
+    printf '%s' "$1" | tr -d '\r\n' | sed -e 's/\\/\\\\/g' -e 's/"/\\\\"/g'
+}
+ACTION_JSON="$(safe_json "$ACTION")"
+PROFILE_JSON="$(safe_json "${PROFILE:-}")"
+
 CONFIGFS_ROOT="/sys/kernel/config/usb_gadget"
 
 if [[ -z "$ACTION" ]]; then
@@ -46,7 +55,7 @@ fi
 
 if [[ "$IS_LINUX" != "yes" ]]; then
     cat <<JSON
-{"tool":"usb-arsenal","action":"$ACTION","profile":"$PROFILE","platform":"$(uname -s 2>/dev/null || echo unknown)","gadgets":[],"currentGadgets":0,"configfsMounted":false,"durationMs":0,"error":"USB gadget profiling nécessite Linux/WSL avec configfs + un câble USB OTG. Plateforme actuelle: $(uname -s 2>/dev/null || echo unknown)."}
+{"tool":"usb-arsenal","action":"$ACTION_JSON","profile":"$PROFILE_JSON","platform":"$(uname -s 2>/dev/null || echo unknown)","gadgets":[],"currentGadgets":0,"configfsMounted":false,"durationMs":0,"error":"USB gadget profiling nécessite Linux/WSL avec configfs + un câble USB OTG. Plateforme actuelle: $(uname -s 2>/dev/null || echo unknown)."}
 JSON
     exit 0
 fi

@@ -51,10 +51,131 @@ async function startServer() {
   // Durcissement de base
   app.disable('x-powered-by');
   app.set('trust proxy', false);
+  const isProdServer = process.env.NODE_ENV === 'production';
   app.use((_req, res, next) => {
     res.setHeader('X-Content-Type-Options', 'nosniff');
     res.setHeader('X-Frame-Options', 'SAMEORIGIN');
     res.setHeader('Referrer-Policy', 'no-referrer');
+    // CSP en production uniquement : le middleware Vite (dev) injecte des
+    // scripts inline pour le HMR, incompatibles avec script-src 'self'.
+    // L'application est servie depuis 'self' ; seules les Google Fonts sont
+    // chargées depuis fonts.googleapis.com (style) / fonts.gstatic.com (font).
+    if (isProdServer) {
+      res.setHeader(
+        'Content-Security-Policy',
+        [
+          "default-src 'self'",
+          "script-src 'self'",
+          "style-src 'self' 'unsafe-inline' https://fonts.googleapis.com",
+          "font-src 'self' https://fonts.gstatic.com",
+          "img-src 'self' data: blob:",
+          "connect-src 'self'",
+          "frame-ancestors 'none'",
+          "base-uri 'self'",
+          "form-action 'self'",
+          'object-src \'none\'',
+        ].join('; ')
+      );
+    }
+    next();
+  });
+
+  // ---------------------------------------------------------------------------
+  // Contrôle d'accès local — anti DNS-rebinding / anti drive-by (audit SEC-AUDIT-1)
+  // ---------------------------------------------------------------------------
+  // L'API écoute sur 127.0.0.1, mais une page web visitée par l'opérateur peut
+  // tenter d'appeler l'API depuis son navigateur :
+  //   - DNS rebinding (un domaine de l'attaquant résolu vers 127.0.0.1),
+  //   - POST cross-origin drive-by (CSRF) contre /api/terminal/exec (RCE),
+  //   - exfiltration par balises <img src="http://127.0.0.1:3000/api/database/export">.
+  // Défenses en couches :
+  //   1. Host strictement local → neutralise le rebinding (le navigateur envoie
+  //      le Host de l'attaquant après le rebinding),
+  //   2. Origin/Referer strictement locaux si présents → neutralise le CSRF,
+  //   3. jeton de session généré par electron-main et transmis via
+  //      GCYB_SESSION_TOKEN : le renderer le reçoit dans l'URL de charge
+  //      (?gcyb_token=…), le serveur pose alors un cookie HttpOnly
+  //      SameSite=Strict exigé sur /api/* (sauf /api/health, sondé par le
+  //      processus principal sans cookie).
+  // En dev (`npm run dev` hors Electron) le jeton est absent : la couche 3 est
+  // désactivée (comportement d'un serveur de développement), les couches 1-2
+  // restent actives.
+  const SESSION_TOKEN = process.env.GCYB_SESSION_TOKEN || '';
+  const LOCAL_HOSTS = new Set([`127.0.0.1:${PORT}`, `localhost:${PORT}`, `[::1]:${PORT}`]);
+  const LOCAL_ORIGINS = new Set([
+    `http://127.0.0.1:${PORT}`,
+    `http://localhost:${PORT}`,
+    `http://[::1]:${PORT}`,
+  ]);
+  const SESSION_COOKIE = 'gcyb_session';
+  const parseSessionCookies = (header: string | undefined): Record<string, string> => {
+    const out: Record<string, string> = {};
+    (header || '').split(';').forEach((part) => {
+      const idx = part.indexOf('=');
+      if (idx > 0) out[part.slice(0, idx).trim()] = part.slice(idx + 1).trim();
+    });
+    return out;
+  };
+  const isLocalOriginValue = (value: string): boolean => {
+    try {
+      return LOCAL_ORIGINS.has(new URL(value).origin);
+    } catch {
+      return false;
+    }
+  };
+  let devTokenWarningShown = false;
+
+  app.use((req, res, next) => {
+    // Couche 1 — Host : tout hôte non local est rejeté avant toute autre logique.
+    if (!req.headers.host || !LOCAL_HOSTS.has(req.headers.host)) {
+      res.status(403).json({ error: 'Accès interdit (hôte non local)' });
+      return;
+    }
+    // Couche 2 — Origin/Referer : une page distante déclenchant une requête
+    // cross-origin expose son origine ; seules les origines locales passent.
+    const origin = req.headers.origin;
+    if (origin !== undefined && !LOCAL_ORIGINS.has(origin)) {
+      res.status(403).json({ error: 'Accès interdit (origine non locale)' });
+      return;
+    }
+    const referer = req.headers.referer;
+    if (referer && referer.startsWith('http') && !isLocalOriginValue(referer)) {
+      res.status(403).json({ error: 'Accès interdit (référent non local)' });
+      return;
+    }
+
+    // Jeton : via query (charge initiale ?gcyb_token=…), en-tête ou cookie.
+    const provided =
+      (typeof req.query.gcyb_token === 'string' && req.query.gcyb_token) ||
+      req.header('x-gcyb-token') ||
+      parseSessionCookies(req.headers.cookie)[SESSION_COOKIE] ||
+      '';
+    if (SESSION_TOKEN && provided === SESSION_TOKEN) {
+      // Pose le cookie HttpOnly SameSite=Strict pour toute la session renderer.
+      // SameSite=Strict : le navigateur ne l'envoie JAMAIS sur une requête
+      // cross-site — les drive-by restent sans cookie même si les couches 1-2
+      // étaient contournées.
+      res.setHeader(
+        'Set-Cookie',
+        `${SESSION_COOKIE}=${SESSION_TOKEN}; Path=/; HttpOnly; SameSite=Strict; Max-Age=43200`
+      );
+    }
+
+    // Couche 3 — mode packaged : toute requête /api/ (hors health check sondé
+    // par le processus principal) exige le jeton ou le cookie de session.
+    if (req.path.startsWith('/api/') && req.path !== '/api/health') {
+      if (!SESSION_TOKEN) {
+        if (!devTokenWarningShown) {
+          devTokenWarningShown = true;
+          console.warn(
+            '[ShadowScan] GCYB_SESSION_TOKEN absent (mode dev hors Electron) — exigence de jeton désactivée.'
+          );
+        }
+      } else if (provided !== SESSION_TOKEN) {
+        res.status(403).json({ error: 'Accès interdit (session invalide — relancez Guyma Cyb)' });
+        return;
+      }
+    }
     next();
   });
 
@@ -560,138 +681,18 @@ async function startServer() {
   // ============================================================
   //  API Outils de sécurité & réseau (toolbridge → Rust + scripts)
   // ============================================================
-
-  // Vérifie quels outils sont installés sur le système hôte.
-  app.get('/api/tools/status', async (_req, res) => {
-    try {
-      const status = await tb.checkInstalledTools();
-      res.json(status);
-    } catch (err: any) {
-      res.status(500).json({ error: err.message });
-    }
-  });
-
-  // Audit d'en-têtes HTTP via le noyau Rust.
-  app.post('/api/tools/headers', async (req, res) => {
-    try {
-      const { url } = req.body;
-      if (!url) return res.status(400).json({ error: 'URL requise' });
-      const result = await tb.coreHeaders(url);
-      res.json(result);
-    } catch (err: any) {
-      res.status(500).json({ error: err.message });
-    }
-  });
-
-  // Nmap — scan de ports
-  app.post('/api/tools/nmap', async (req, res) => {
-    try {
-      const { url, ports } = req.body;
-      if (!url) return res.status(400).json({ error: 'URL requise' });
-      res.json(await tb.toolNmap(url, ports));
-    } catch (err: any) {
-      res.status(500).json({ error: err.message });
-    }
-  });
-
-  // Nikto — vulnérabilités serveur web
-  app.post('/api/tools/nikto', async (req, res) => {
-    try {
-      const { url } = req.body;
-      if (!url) return res.status(400).json({ error: 'URL requise' });
-      res.json(await tb.toolNikto(url));
-    } catch (err: any) {
-      res.status(500).json({ error: err.message });
-    }
-  });
-
-  // WhatWeb — empreinte technologies web
-  app.post('/api/tools/whatweb', async (req, res) => {
-    try {
-      const { url } = req.body;
-      if (!url) return res.status(400).json({ error: 'URL requise' });
-      res.json(await tb.toolWhatweb(url));
-    } catch (err: any) {
-      res.status(500).json({ error: err.message });
-    }
-  });
-
-  // Dirbrute — découverte de chemins
-  app.post('/api/tools/dirbrute', async (req, res) => {
-    try {
-      const { url, wordlist } = req.body;
-      if (!url) return res.status(400).json({ error: 'URL requise' });
-      res.json(await tb.toolDirbrute(url, wordlist));
-    } catch (err: any) {
-      res.status(500).json({ error: err.message });
-    }
-  });
-
-  // DNS recon — enregistrements DNS
-  app.post('/api/tools/dnsrecon', async (req, res) => {
-    try {
-      const { url } = req.body;
-      if (!url) return res.status(400).json({ error: 'URL requise' });
-      res.json(await tb.toolDnsrecon(url));
-    } catch (err: any) {
-      res.status(500).json({ error: err.message });
-    }
-  });
-
-  // SSL/TLS audit — certificats + versions TLS
-  app.post('/api/tools/ssl-audit', async (req, res) => {
-    try {
-      const { url, port } = req.body;
-      if (!url) return res.status(400).json({ error: 'URL requise' });
-      res.json(await tb.toolSslAudit(url, port));
-    } catch (err: any) {
-      res.status(500).json({ error: err.message });
-    }
-  });
-
-  // Ping — connectivité ICMP
-  app.post('/api/tools/ping', async (req, res) => {
-    try {
-      const { url, count } = req.body;
-      if (!url) return res.status(400).json({ error: 'URL requise' });
-      res.json(await tb.toolPing(url, count));
-    } catch (err: any) {
-      res.status(500).json({ error: err.message });
-    }
-  });
-
-  // MTR / traceroute — chemin réseau
-  app.post('/api/tools/mtr', async (req, res) => {
-    try {
-      const { url, count } = req.body;
-      if (!url) return res.status(400).json({ error: 'URL requise' });
-      res.json(await tb.toolMtr(url, count));
-    } catch (err: any) {
-      res.status(500).json({ error: err.message });
-    }
-  });
-
-  // Netcat — sonde TCP
-  app.post('/api/tools/netcat', async (req, res) => {
-    try {
-      const { url, port, data } = req.body;
-      if (!url) return res.status(400).json({ error: 'URL requise' });
-      res.json(await tb.toolNetcat(url, port, data));
-    } catch (err: any) {
-      res.status(500).json({ error: err.message });
-    }
-  });
-
-  // iperf3 — mesure de bande passante (client)
-  app.post('/api/tools/iperf3', async (req, res) => {
-    try {
-      const { server, port, udp, time, reverse } = req.body;
-      if (!server) return res.status(400).json({ error: 'server requis' });
-      res.json(await tb.toolIperf3(server, { port, udp, time, reverse }));
-    } catch (err: any) {
-      res.status(500).json({ error: err.message });
-    }
-  });
+  //  NOTE (audit SEC-AUDIT-1 — M2) : les 12 endpoints directs
+  //  `/api/tools/{status,headers,nmap,nikto,whatweb,dirbrute,dnsrecon,
+  //  ssl-audit,ping,mtr,netcat,iperf3}` ont été SUPPRIMÉS. Ils n'étaient
+  //  appelés par aucun écran du frontend et contournaient le modèle
+  //  d'autorisation légale (attestation ACTIVE/DESTRUCTIVE) exigé partout
+  //  ailleurs — chaque appel lançait un vrai outil (nmap/nikto…) contre une
+  //  cible arbitraire sans attestation ni journalisation.
+  //  Les parcours UI passent désormais exclusivement par les flux attestés :
+  //  /api/scan/analyze, /api/recon/advanced-suite, /api/tests/active/run
+  //  (attestation obligatoire), /api/localnetwork/scan, /api/arsenal/*.
+  //  Les fonctions toolbridge (toolNmap, toolNikto…) restent disponibles
+  //  pour les modules internes (activeTests.ts utilise toolNikto).
 
   // ============================================================
   //  API WiFi & Réseau sans fil (security-scripts/wifi-*.sh)
@@ -1031,79 +1032,6 @@ async function startServer() {
       const { mac } = req.body;
       if (!mac) return res.status(400).json({ error: 'mac requis' });
       res.json(await tb.toolGeoMac(mac));
-    } catch (err: any) {
-      res.status(500).json({ error: err.message });
-    }
-  });
-
-  // Dashboard — statistiques agrégées depuis SQLite (compteurs + derniers 5)
-  // Doctrine « zéro invention » : on EXCLUT systématiquement les entrées du
-  // laboratoire d'attaques (target-lab-sandbox / shadowscan-lab.internal /
-  // scans 'lab-%' / 'SCAN-LAB-%' / 'SCAN-WIFI-LAB-%') pour que le dashboard
-  // ne reflète QUE les vrais scans de cibles réelles.
-  app.get('/api/dashboard/stats', async (_req, res) => {
-    try {
-      const db = await getDatabase();
-      const LAB_TARGET_CLAUSE = `id != 'target-lab-sandbox' AND url NOT LIKE '%shadowscan-lab.internal%'`;
-      const LAB_SCAN_CLAUSE = `id NOT LIKE 'lab-%' AND id NOT LIKE 'SCAN-LAB-%' AND id NOT LIKE 'SCAN-WIFI-LAB-%'`;
-      const LAB_FINDING_CLAUSE = `scan_id NOT LIKE 'lab-%' AND scan_id NOT LIKE 'SCAN-LAB-%' AND scan_id NOT LIKE 'SCAN-WIFI-LAB-%' AND target_url NOT LIKE '%shadowscan-lab.internal%'`;
-
-      const targetCount = Number(db.exec(`SELECT COUNT(*) FROM targets WHERE ${LAB_TARGET_CLAUSE}`)[0]?.values[0]?.[0] || 0);
-      const scanCount = Number(db.exec(`SELECT COUNT(*) FROM scans WHERE ${LAB_SCAN_CLAUSE}`)[0]?.values[0]?.[0] || 0);
-      const findingsCount = Number(db.exec(`SELECT COUNT(*) FROM findings WHERE ${LAB_FINDING_CLAUSE}`)[0]?.values[0]?.[0] || 0);
-
-      // Findings par sévérité (CRITICAL / HIGH / MEDIUM / LOW / INFO + autres)
-      const sevRes = db.exec(`SELECT severity, COUNT(*) FROM findings WHERE ${LAB_FINDING_CLAUSE} GROUP BY severity`);
-      const bySeverity: Record<string, number> = { CRITICAL: 0, HIGH: 0, MEDIUM: 0, LOW: 0, INFO: 0 };
-      if (sevRes[0]) {
-        for (const row of sevRes[0].values) {
-          const sev = String(row[0] || '').toUpperCase();
-          const count = Number(row[1]) || 0;
-          if (sev in bySeverity) bySeverity[sev] = count;
-          else bySeverity[sev] = (bySeverity[sev] || 0) + count;
-        }
-      }
-
-      // 5 derniers findings (excluant le lab)
-      const recentFindingsRes = db.exec(
-        `SELECT id, target_url, title, severity, cvss, created_at
-         FROM findings WHERE ${LAB_FINDING_CLAUSE} ORDER BY created_at DESC LIMIT 5`
-      );
-      const recentFindings: any[] = [];
-      if (recentFindingsRes[0]) {
-        const cols = recentFindingsRes[0].columns;
-        for (const row of recentFindingsRes[0].values) {
-          const obj: Record<string, any> = {};
-          cols.forEach((c, i) => (obj[c] = row[i]));
-          recentFindings.push(obj);
-        }
-      }
-
-      // 5 dernières targets (excluant le lab)
-      const recentTargetsRes = db.exec(
-        `SELECT id, url, domain, scope, status, last_scanned_at
-         FROM targets WHERE ${LAB_TARGET_CLAUSE} ORDER BY last_scanned_at DESC LIMIT 5`
-      );
-      const recentTargets: any[] = [];
-      if (recentTargetsRes[0]) {
-        const cols = recentTargetsRes[0].columns;
-        for (const row of recentTargetsRes[0].values) {
-          const obj: Record<string, any> = {};
-          cols.forEach((c, i) => (obj[c] = row[i]));
-          recentTargets.push(obj);
-        }
-      }
-
-      res.json({
-        targets: targetCount,
-        scans: scanCount,
-        findings: findingsCount,
-        bySeverity,
-        recentFindings,
-        recentTargets,
-        engine: 'wsl-bridge-real',
-        platform: process.platform,
-      });
     } catch (err: any) {
       res.status(500).json({ error: err.message });
     }

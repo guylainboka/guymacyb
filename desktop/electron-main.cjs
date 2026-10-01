@@ -28,6 +28,7 @@ const path = require('path');
 const { spawn, execFile } = require('child_process');
 const http = require('http');
 const fs = require('fs');
+const crypto = require('crypto');
 
 // ---------------------------------------------------------------------------
 // Constants
@@ -78,6 +79,12 @@ const TOOLS_DIR = path.join(RESOURCES_DIR, 'tools');
 
 let mainWindow = null;
 let serverProcess = null;
+// Jeton de session (audit SEC-AUDIT-1 — H1) : généré par le processus
+// principal et transmis au serveur Express via GCYB_SESSION_TOKEN. Le
+// renderer le reçoit dans l'URL de charge (?gcyb_token=…) ; le serveur pose
+// alors un cookie HttpOnly SameSite=Strict exigé sur /api/*. Toute page web
+// distante (DNS rebinding, drive-by CSRF, balises <img>) est ainsi bloquée.
+let SESSION_TOKEN = '';
 let serverReady = false;
 let healthTimer = null;
 let healthDeadline = null;
@@ -129,6 +136,11 @@ function buildServerEnv() {
   env.HOST = SERVER_HOST;
   env.GCYB_DESKTOP = '1';
   env.GCYB_VERSION = APP_VERSION;
+
+  // Jeton de session (audit SEC-AUDIT-1 — H1) : nouveau jeton à chaque
+  // démarrage du backend ; le renderer le reçoit via loadURL (?gcyb_token=…).
+  SESSION_TOKEN = crypto.randomBytes(32).toString('hex');
+  env.GCYB_SESSION_TOKEN = SESSION_TOKEN;
 
   env.SHADOWSCAN_CORE_PATH = RUST_CORE;
   env.SECURITY_SCRIPTS_DIR = SECURITY_SCRIPTS_DIR;
@@ -690,11 +702,28 @@ function createWizardWindow() {
     webPreferences: {
       nodeIntegration: false,
       contextIsolation: true,
-      sandbox: false,
+      // sandbox:true (audit SEC-AUDIT-1 — M4) : le preload setup-preload.cjs
+      // n'utilise que contextBridge/ipcRenderer — il fonctionne en sandbox.
+      sandbox: true,
       preload: path.join(__dirname, 'setup-preload.cjs'),
     },
   });
   wizardWindow.loadFile(path.join(__dirname, 'setup-wizard.html'));
+
+  // Garde de navigation + ouverture (audit SEC-AUDIT-1 — M4) : le wizard est
+  // un document local (file://) sans aucune raison de naviguer ailleurs.
+  wizardWindow.webContents.on('will-navigate', (event, url) => {
+    if (!url.startsWith('file://')) {
+      event.preventDefault();
+      console.warn('[GuymaCyb] navigation wizard bloquée vers:', url);
+    }
+  });
+  wizardWindow.webContents.setWindowOpenHandler(({ url }) => {
+    if (url.startsWith('http:') || url.startsWith('https:')) {
+      shell.openExternal(url);
+    }
+    return { action: 'deny' };
+  });
   wizardWindow.on('closed', () => {
     wizardWindow = null;
     // Reset : au prochain open-wizard ou premier lancement, le flag repart à false.
@@ -754,6 +783,16 @@ function createWindow() {
     return { action: 'deny' };
   });
 
+  // Garde de navigation (audit SEC-AUDIT-1 — M4) : la fenêtre ne peut pas
+  // naviguer hors du serveur local (une XSS future ou un lien inattendu ne
+  // doit jamais pouvoir quitter l'application ni décharger les preloads IPC).
+  mainWindow.webContents.on('will-navigate', (event, url) => {
+    if (!url.startsWith(`http://${SERVER_HOST}:${SERVER_PORT}/`)) {
+      event.preventDefault();
+      console.warn('[GuymaCyb] navigation bloquée vers:', url);
+    }
+  });
+
   mainWindow.once('ready-to-show', () => {
     mainWindow.show();
   });
@@ -775,7 +814,11 @@ async function loadApp() {
     return;
   }
   if (!mainWindow) return;
-  mainWindow.loadURL(`http://${SERVER_HOST}:${SERVER_PORT}/`).catch((err) => {
+  // Le jeton de session est passé dans l'URL de charge : le serveur le lit
+  // (query ?gcyb_token=…) et pose le cookie HttpOnly de session. Le renderer
+  // n'a rien à faire — tous ses fetchs /api/ emportent ensuite le cookie.
+  const authSuffix = SESSION_TOKEN ? `/?gcyb_token=${SESSION_TOKEN}` : '/';
+  mainWindow.loadURL(`http://${SERVER_HOST}:${SERVER_PORT}${authSuffix}`).catch((err) => {
     console.error('[GuymaCyb] failed to load URL:', err);
   });
 }

@@ -23,7 +23,8 @@ Express + Rust + shell scripts) into a real installable Windows `.exe`.
 │  │  dist-server/server.cjs  (Express backend, bundled by esbuild)   │  │
 │  │   • serves the pre-built frontend from dist/                     │  │
 │  │   • /api/scan/analyze   → toolbridge.coreScan()  → Rust binary   │  │
-│  │   • /api/tools/nmap     → toolbridge.toolNmap()  → bash script   │  │
+│  │   • /api/tests/active/run → attestations + real tools (SEC-AUDIT)│  │
+│  │   • /api/* protégé: Host local + jeton session + cookie Strict   │  │
 │  │   • SQLite via sql.js (loads dist-server/sql-wasm.wasm)          │  │
 │  └──────────────────────────────────────────────────────────────────┘  │
 │                          │ on each scan request                        │

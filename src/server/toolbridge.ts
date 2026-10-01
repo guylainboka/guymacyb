@@ -792,13 +792,31 @@ export const toolWifiEvilTwin = (
 //     Windows, accès aux vraies API/APIs Windows), bash/python via WSL détecté.
 //   - Linux   : bash/python natifs, powershell via pwsh si présent (honnête sinon).
 // Mêmes garde-fous que terminal-exec.sh (patterns destructeurs refusés).
-
+// NOTE (audit SEC-AUDIT-1 — M1) : cette liste est une protection INDICATIVE
+// contre les fautes de frappe catastrophiques (`rm -rf /`, fork bomb, dd vers
+// un disque…) — le terminal reste par conception un shell complet : un
+// opérateur déterminé peut contourner une liste noire (encodages, variables,
+// sous-shells). La vraie frontière de sécurité est le contrôle d'accès local
+// de server.ts (Host/Origin/jeton) + l'attestation légale, pas ce filtre.
 const TERMINAL_DANGEROUS = [
-  /rm\s+-rf\s+\/( |$)/,
+  // rm vers la racine du FS ou son contenu direct — n'importe quelle position
+  // d'indicateurs : rm -rf /, rm -fr /, rm /, rm --recursive --force /, rm -rf /*
+  // (le slash racine en début ou fin d'arguments — le catch-all final couvre
+  // toutes les combinaisons d'indicateurs, l'ordre inclus : rm / -rf)
+  /rm\s+\/(\s|\*|$)/,
+  /rm\s+[^|;&]*\s\/(\s|\*|$)/,
+  // Fork bomb
   /:\(\)\s*\{\s*:\|:\&\s*\}\s*;/,
-  /mkfs\./,
-  /dd\s+.*of=\/dev\/sd/,
-  /Remove-Item\s+-Recurse\s+-Force\s+[A-Za-z]:\\\s*$/,
+  // Formatage de système de fichiers (outils mkfs réels uniquement)
+  /\bmkfs\.(ext[2-4]|btrfs|vfat|fat|ntfs|xfs|jfs|swap|msdos)\b/i,
+  /Format-Volume/i,
+  // dd vers tout périphérique bloc (sd, nvme, mmcblk, hd, vd…)
+  /dd\s+[^|;&]*of=\/dev\/(sd|nvme|mmcblk|hd|vd)/,
+  // Windows : suppression récursive de racines de disque (rd, rmdir, del, PowerShell)
+  /\b(rd|rmdir)\s+\/[sq]/i,
+  /\bdel\s+\/s/i,
+  /Remove-Item\s+[^|;&]*-Recurse[^|;&]*-Force[^|;&]*[A-Za-z]:\\(\*|$)/i,
+  /Remove-Item\s+-Recurse\s+-Force\s+[A-Za-z]:\\\s*$/i,
   /format\s+[A-Za-z]:/i,
 ];
 

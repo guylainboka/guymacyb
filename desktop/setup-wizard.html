@@ -2,6 +2,12 @@
 <html lang="fr">
 <head>
 <meta charset="UTF-8">
+<!-- CSP (audit SEC-AUDIT-1 — F1/M5) : document local sans aucun appel réseau
+     (toute la communication passe par l'IPC Electron — preload setup-preload.cjs).
+     script/style inline assumés (document embarqué) ; seules les Google Fonts
+     sont chargées. connect-src 'none' garantit qu'aucune exfiltration réseau
+     n'est possible depuis le wizard, même en cas d'injection HTML. -->
+<meta http-equiv="Content-Security-Policy" content="default-src 'self' file:; script-src 'self' file: 'unsafe-inline'; style-src 'self' file: 'unsafe-inline' https://fonts.googleapis.com; font-src 'self' file: https://fonts.gstatic.com; img-src 'self' file: data:; connect-src 'none'; object-src 'none'; base-uri 'none'">
 <title>Guyma Cyb — Assistant de configuration</title>
 <link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Material+Symbols+Outlined:opsz,wght,FILL,GRAD@24,400,0,0&family=JetBrains+Mono:wght@400;500&display=swap">
 <style>
@@ -274,7 +280,13 @@ function appendLog(id, line, cls) {
   const el = document.getElementById(id);
   if (!el) return;
   el.style.display = 'block';
-  el.innerHTML += '<span class="' + (cls || '') + '">' + line + '</span>\n';
+  // textContent (audit SEC-AUDIT-1 — F1) : les lignes viennent de sorties
+  // réelles de wsl.exe/apt/powershell — jamais interpolées en HTML.
+  const span = document.createElement('span');
+  span.className = cls || '';
+  span.textContent = line;
+  el.appendChild(span);
+  el.appendChild(document.createTextNode('\n'));
   el.scrollTop = el.scrollHeight;
 }
 function setSpinner(on) { document.getElementById('global-spinner').style.display = on ? 'flex' : 'none'; }
@@ -418,18 +430,38 @@ async function installTools() {
 }
 
 // ---- Étape 4 : Récapitulatif ----
+// DOM construit avec createElement/textContent (audit SEC-AUDIT-1 — F1) :
+// detected.wsl.defaultDistro provient de la sortie réelle de wsl.exe —
+// jamais interpolée via innerHTML.
 function buildSummary() {
   const card = document.getElementById('summary-card');
-  const wslStatus = detected.wsl && detected.wsl.available
-    ? '<span class="badge ok">Installé' + (detected.wsl.defaultDistro ? ' — ' + detected.wsl.defaultDistro : '') + '</span>'
-    : (detected.isWindows ? '<span class="badge warn">Non installé</span>' : '<span class="badge info">Linux natif</span>');
+  card.textContent = '';
+  function statusLine(dotCls, labelText, badgeCls, badgeText) {
+    const line = document.createElement('div');
+    line.className = 'status-line';
+    line.style.marginBottom = '10px';
+    const dot = document.createElement('span');
+    dot.className = 'dot ' + dotCls;
+    line.appendChild(dot);
+    line.appendChild(document.createTextNode(labelText + ' '));
+    if (badgeCls && badgeText) {
+      const badge = document.createElement('span');
+      badge.className = 'badge ' + badgeCls;
+      badge.textContent = badgeText;
+      line.appendChild(badge);
+    }
+    card.appendChild(line);
+  }
+  if (detected.wsl && detected.wsl.available) {
+    statusLine('ok', 'WSL / Environnement Linux', 'ok', 'Installé' + (detected.wsl.defaultDistro ? ' — ' + detected.wsl.defaultDistro : ''));
+  } else {
+    statusLine('ok', 'WSL / Environnement Linux', detected.isWindows ? 'warn' : 'info', detected.isWindows ? 'Non installé' : 'Linux natif');
+  }
   const toolsOk = detected.tools.available.length;
   const toolsMiss = detected.tools.missing.length;
-  card.innerHTML = '' +
-    '<div class="status-line" style="margin-bottom:10px"><span class="dot ok"></span>WSL / Environnement Linux ' + wslStatus + '</div>' +
-    '<div class="status-line" style="margin-bottom:10px"><span class="dot ' + (toolsMiss === 0 ? 'ok' : 'warn') + '"></span>Outils Linux : ' + toolsOk + ' installés, ' + toolsMiss + ' manquants</div>' +
-    '<div class="status-line" style="margin-bottom:10px"><span class="dot ok"></span>Noyau scan : ' + (detected.rust ? '<span class="badge ok">Rust présent</span>' : '<span class="badge info">Fallback Node (réel)</span>') + '</div>' +
-    '<div class="status-line"><span class="dot ok"></span>Runtime Node ' + detected.node + '</div>';
+  statusLine(toolsMiss === 0 ? 'ok' : 'warn', 'Outils Linux : ' + toolsOk + ' installés, ' + toolsMiss + ' manquants');
+  statusLine('ok', 'Noyau scan :', detected.rust ? 'ok' : 'info', detected.rust ? 'Rust présent' : 'Fallback Node (réel)');
+  statusLine('ok', 'Runtime Node ' + detected.node);
   setFooterNote('Configuration terminée — vous pouvez lancer Guyma Cyb');
 }
 
