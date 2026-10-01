@@ -1,4 +1,5 @@
 import React, { useCallback, useEffect, useState } from 'react';
+import { ConfirmActionModal } from '../common/ConfirmActionModal';
 
 interface WslDistro {
   name: string;
@@ -51,6 +52,322 @@ const fmtMb = (mb: number) => {
   if (!Number.isFinite(mb)) return '—';
   if (mb >= 1024) return `${(mb / 1024).toFixed(1)} GB`;
   return `${Math.round(mb)} MB`;
+};
+
+/* ============================================================================
+ * Centre de mises à jour (V2) — détection 100 % RÉELLE, zéro simulation.
+ * Doit correspondre à src/server/updates.ts (GET /api/updates/check).
+ * ==========================================================================*/
+interface AppUpdateInfo {
+  current: string;
+  latest: string | null;
+  updateAvailable: boolean;
+  releaseUrl: string | null;
+  releaseName: string | null;
+  publishedAt: string | null;
+  notes: string | null;
+  asset: { name: string; size: number; downloadUrl: string } | null;
+  checkedAt: string;
+  error: string | null;
+}
+
+interface ToolPackageStatus {
+  package: string;
+  installed: string | null;
+  candidate: string | null;
+  action: 'none' | 'upgrade' | 'install';
+}
+
+interface ToolsUpdateInfo {
+  platform: string;
+  isWindows: boolean;
+  distro: string | null;
+  packages: ToolPackageStatus[];
+  upgradable: string[];
+  missing: string[];
+  checkedAt: string;
+  error: string | null;
+}
+
+interface UpdatesPayload {
+  app?: AppUpdateInfo;
+  tools?: ToolsUpdateInfo;
+  error?: string;
+}
+
+const fmtSize = (bytes: number) => {
+  if (!Number.isFinite(bytes) || bytes <= 0) return '—';
+  return `${(bytes / (1024 * 1024)).toFixed(1)} Mo`;
+};
+
+/**
+ * UNE seule action d'application, précédée d'UN seul avertissement (accord).
+ * Pas de choix successifs : Confirmer → tout s'exécute d'un bloc.
+ */
+const UpdatesCenter: React.FC<{ onRefreshCore: () => void }> = ({ onRefreshCore }) => {
+  const [data, setData] = useState<UpdatesPayload | null>(null);
+  const [checking, setChecking] = useState<boolean>(false);
+  const [applying, setApplying] = useState<boolean>(false);
+  const [confirmOpen, setConfirmOpen] = useState<boolean>(false);
+  const [applyOutput, setApplyOutput] = useState<string>('');
+  const [applyError, setApplyError] = useState<string>('');
+  const [applySummary, setApplySummary] = useState<string>('');
+
+  const check = useCallback(async () => {
+    setChecking(true);
+    try {
+      const r = await fetch('/api/updates/check');
+      const d: UpdatesPayload = await r.json();
+      setData(d);
+    } catch (e: any) {
+      setData({ error: e?.message || 'API injoignable' });
+    } finally {
+      setChecking(false);
+    }
+  }, []);
+
+  useEffect(() => { void check(); }, [check]);
+
+  const app = data?.app;
+  const tools = data?.tools;
+  const upgradable = tools?.upgradable ?? [];
+  const missing = tools?.missing ?? [];
+  const todoCount = upgradable.length + missing.length;
+  const nothingToDo = Boolean(tools && !tools.error && todoCount === 0);
+
+  // UNE seule action : le POST applique périmés + manquants d'un bloc.
+  const apply = async () => {
+    setConfirmOpen(false);
+    setApplying(true);
+    setApplyError('');
+    setApplySummary('');
+    setApplyOutput('Application de la mise à jour en cours (apt-get dans la distribution — peut prendre plusieurs minutes)…');
+    try {
+      const r = await fetch('/api/updates/apply-tools', { method: 'POST' });
+      const d = await r.json();
+      if (!r.ok) {
+        setApplyOutput('');
+        setApplyError(d?.error || `Échec HTTP ${r.status}`);
+      } else if (d.skipped === 'nothing-to-do') {
+        setApplyOutput(d.output || 'Rien à mettre à jour.');
+      } else {
+        setApplyOutput(d.output || '(aucune sortie)');
+        const v = d.verification;
+        if (v) {
+          setApplySummary(
+            `Vérification réelle post-application : ${v.verified.length} outil(s) vérifié(s)` +
+            (v.absent.length ? ` — absents : ${v.absent.join(', ')}` : ' — aucun absent')
+          );
+        }
+        onRefreshCore();
+        void check();
+      }
+    } catch (e: any) {
+      setApplyOutput('');
+      setApplyError(e?.message || 'API injoignable');
+    } finally {
+      setApplying(false);
+    }
+  };
+
+  return (
+    <div className="mb-6 rounded-lg border border-[#24314c] bg-[#171b26] p-4">
+      <div className="mb-3 flex flex-wrap items-center justify-between gap-2">
+        <div className="flex items-center gap-2">
+          <span className="material-symbols-outlined text-[18px] text-[#4d8eff]">system_update_alt</span>
+          <h2 className="text-sm font-semibold text-[#dfe2f1]">Centre de mises à jour — logiciel &amp; outils</h2>
+        </div>
+        <button
+          onClick={check}
+          disabled={checking || applying}
+          className="flex items-center gap-1.5 rounded border border-[#24314c] bg-[#0a0e18] px-3 py-1.5 text-xs text-[#c2c6d6] transition-colors hover:border-[#4d8eff]/50 disabled:opacity-50"
+          type="button"
+        >
+          <span className={`material-symbols-outlined text-[16px] ${checking ? 'animate-spin' : ''}`}>refresh</span>
+          {checking ? 'Vérification réelle…' : 'Vérifier les mises à jour'}
+        </button>
+      </div>
+
+      {data?.error && (
+        <div className="mb-3 rounded border border-[#93000a]/40 bg-[#93000a]/20 px-3 py-2 font-mono text-xs text-[#ffb4ab]">
+          {data.error}
+        </div>
+      )}
+
+      {/* — Logiciel : version réelle vs dernière release GitHub — */}
+      <div className="mb-4 rounded border border-[#24314c] bg-[#0a0e18] p-3">
+        <div className="flex flex-wrap items-center justify-between gap-2">
+          <div className="flex items-center gap-2">
+            <span className="material-symbols-outlined text-[18px] text-[#4cd7f6]">desktop_windows</span>
+            <div>
+              <div className="text-xs font-semibold text-[#dfe2f1]">Logiciel Guyma Cyb</div>
+              <div className="font-mono text-[11px] text-[#8c909f]">
+                Version installée : <span className="text-[#c2c6d6]">{app?.current ?? 'détection…'}</span>
+                {app?.latest ? <> · Dernière release : <span className="text-[#c2c6d6]">v{app.latest}</span></> : null}
+              </div>
+            </div>
+          </div>
+          {app?.error ? (
+            <span className="rounded border border-amber-500/30 bg-amber-500/10 px-2 py-0.5 font-mono text-[10px] text-amber-400" title={app.error}>
+              Vérification indisponible
+            </span>
+          ) : app?.updateAvailable ? (
+            <span className="flex items-center gap-1.5 rounded border border-[#4d8eff]/40 bg-[#4d8eff]/15 px-2 py-0.5 text-[10px] font-semibold text-[#4d8eff]">
+              <span className="h-1.5 w-1.5 animate-pulse rounded-full bg-[#4d8eff]" />
+              Mise à jour v{app.latest} disponible
+            </span>
+          ) : app ? (
+            <span className="flex items-center gap-1.5 rounded border border-emerald-500/30 bg-emerald-500/10 px-2 py-0.5 text-[10px] font-semibold text-emerald-400">
+              <span className="material-symbols-outlined text-[12px]">check_circle</span>
+              À jour
+            </span>
+          ) : null}
+        </div>
+        {app?.updateAvailable && (
+          <div className="mt-2 flex flex-wrap items-center gap-3">
+            <button
+              onClick={() => { if (app.releaseUrl) window.open(app.releaseUrl, '_blank', 'noopener'); }}
+              className="flex items-center gap-1.5 rounded border border-[#4d8eff]/40 bg-[#4d8eff]/15 px-3 py-1.5 text-xs font-medium text-[#4d8eff] transition-colors hover:bg-[#4d8eff]/25"
+              type="button"
+            >
+              <span className="material-symbols-outlined text-[16px]">open_in_new</span>
+              Télécharger la v{app.latest}
+            </button>
+            {app.asset && (
+              <span className="font-mono text-[10px] text-[#8c909f]" title={app.asset.downloadUrl}>
+                {app.asset.name} · {fmtSize(app.asset.size)}
+              </span>
+            )}
+          </div>
+        )}
+        {app?.error && <div className="mt-2 font-mono text-[11px] text-amber-400/80">{app.error}</div>}
+      </div>
+
+      {/* — Outils : versions réelles Installed/Candidate — */}
+      <div className="rounded border border-[#24314c] bg-[#0a0e18] p-3">
+        <div className="mb-2 flex flex-wrap items-center justify-between gap-2">
+          <div className="flex items-center gap-2">
+            <span className="material-symbols-outlined text-[18px] text-[#4cd7f6]">build</span>
+            <div className="text-xs font-semibold text-[#dfe2f1]">Outils Linux (apt — versions réelles)</div>
+          </div>
+          {tools && !tools.error && (
+            <div className="font-mono text-[10px] text-[#8c909f]">
+              <span className="text-amber-400">{upgradable.length} périmé(s)</span> · <span className="text-amber-300">{missing.length} absent(s)</span> · distro : {tools.distro ?? '—'}
+            </div>
+          )}
+        </div>
+
+        {tools?.error ? (
+          <div className="rounded border border-amber-500/30 bg-amber-500/10 px-3 py-2 font-mono text-xs text-amber-400">
+            {tools.error}
+          </div>
+        ) : tools ? (
+          <>
+            <div className="max-h-64 overflow-y-auto rounded border border-[#24314c]">
+              <table className="w-full text-xs">
+                <thead className="sticky top-0 bg-[#0a0e18]">
+                  <tr className="font-mono text-[10px] uppercase text-[#8c909f]">
+                    <th className="px-2 py-1 text-left">Paquet</th>
+                    <th className="px-2 py-1 text-left">Installée</th>
+                    <th className="px-2 py-1 text-left">Candidate</th>
+                    <th className="px-2 py-1 text-left">État</th>
+                  </tr>
+                </thead>
+                <tbody>
+                  {tools.packages.map((p) => (
+                    <tr key={p.package} className="border-t border-[#24314c] font-mono text-[11px]">
+                      <td className="px-2 py-1 text-[#dfe2f1]">{p.package}</td>
+                      <td className="px-2 py-1 text-[#c2c6d6]">{p.installed ?? <span className="text-[#8c909f]">(absent)</span>}</td>
+                      <td className="px-2 py-1 text-[#c2c6d6]">{p.candidate ?? '—'}</td>
+                      <td className="px-2 py-1">
+                        {p.action === 'upgrade' ? (
+                          <span className="rounded border border-amber-500/30 bg-amber-500/10 px-1.5 py-0.5 text-[10px] text-amber-400">périmé</span>
+                        ) : p.action === 'install' ? (
+                          <span className="rounded border border-amber-400/30 bg-amber-400/10 px-1.5 py-0.5 text-[10px] text-amber-300">absent</span>
+                        ) : !p.installed ? (
+                          <span className="rounded border border-[#434655] bg-[#201f22] px-1.5 py-0.5 text-[10px] text-[#8c909f]" title="Absent et sans candidate dans les dépôts apt de cette distribution">
+                            indisponible
+                          </span>
+                        ) : (
+                          <span className="rounded border border-emerald-500/30 bg-emerald-500/10 px-1.5 py-0.5 text-[10px] text-emerald-400">à jour</span>
+                        )}
+                      </td>
+                    </tr>
+                  ))}
+                </tbody>
+              </table>
+            </div>
+
+            {/* UNE seule action + UNE confirmation (accord) — pas de choix successifs */}
+            <div className="mt-3 flex flex-wrap items-center gap-3">
+              <button
+                onClick={() => setConfirmOpen(true)}
+                disabled={applying || checking || nothingToDo || Boolean(tools.error)}
+                title={
+                  nothingToDo
+                    ? 'Tous les paquets sont à jour et aucun n\'est manquant'
+                    : `Met à jour ${upgradable.length} paquet(s) périmé(s) et installe ${missing.length} manquant(s) en UNE commande apt`
+                }
+                className="flex items-center gap-2 rounded border border-[#4d8eff]/40 bg-[#4d8eff]/15 px-4 py-2 text-sm font-medium text-[#4d8eff] transition-colors hover:bg-[#4d8eff]/25 disabled:cursor-not-allowed disabled:opacity-50"
+                type="button"
+              >
+                <span className={`material-symbols-outlined text-[18px] ${applying ? 'animate-spin' : ''}`}>
+                  {applying ? 'progress_activity' : 'download_for_offline'}
+                </span>
+                {applying ? 'Mise à jour en cours…' : 'Tout mettre à jour maintenant'}
+              </button>
+              <span className="font-mono text-[11px] text-[#8c909f]">
+                UNE confirmation, puis tout s'applique d'un bloc via <code>apt-get install</code>.
+              </span>
+            </div>
+          </>
+        ) : (
+          <div className="font-mono text-xs text-[#8c909f]">Interrogation d'apt en cours (les dépôts sont rafraîchis réellement)…</div>
+        )}
+      </div>
+
+      {(applyOutput || applyError || applySummary) && (
+        <div className="mt-3">
+          {applyError && (
+            <div className="mb-2 rounded border border-[#93000a]/40 bg-[#93000a]/20 px-3 py-2 font-mono text-xs text-[#ffb4ab]">✗ {applyError}</div>
+          )}
+          {applySummary && (
+            <div className="mb-2 rounded border border-emerald-500/30 bg-emerald-500/10 px-3 py-2 font-mono text-xs text-emerald-300">{applySummary}</div>
+          )}
+          {applyOutput && (
+            <pre className="max-h-64 overflow-y-auto whitespace-pre-wrap break-all rounded border border-[#24314c] bg-[#0a0e18] p-3 font-mono text-[11px] text-[#c2c6d6]">
+{applyOutput}
+            </pre>
+          )}
+        </div>
+      )}
+
+      {/* Avertissement unique (accord) avant l'action — UN seul écran, puis exécution directe */}
+      <ConfirmActionModal
+        open={confirmOpen}
+        title="Avertissement — action unique"
+        busy={applying}
+        confirmLabel="Confirmer et appliquer"
+        onConfirm={apply}
+        onCancel={() => setConfirmOpen(false)}
+      >
+        <p className="text-sm leading-relaxed text-[#c2c6d6]">
+          Le logiciel va appliquer <strong className="text-white">tout d'un bloc</strong> via{' '}
+          <code className="font-mono text-[#4cd7f6]">apt-get install</code> dans la distribution{' '}
+          <strong className="text-white">{tools?.distro ?? 'WSL'}</strong> :
+        </p>
+        <ul className="mt-2 space-y-1 font-mono text-xs text-[#c2c6d6]">
+          <li>• Mettre à jour <span className="text-amber-400">{upgradable.length}</span> paquet(s) périmé(s)</li>
+          <li>• Installer <span className="text-amber-300">{missing.length}</span> paquet(s) absent(s)</li>
+        </ul>
+        <p className="mt-3 text-xs text-[#8c909f]">
+          L'opération peut prendre plusieurs minutes (téléchargement des dépôts et des paquets).
+          La sortie réelle d'apt sera affichée ensuite. Aucune donnée n'est détruite : il s'agit
+          d'installation/mise à jour de paquets.
+        </p>
+      </ConfirmActionModal>
+    </div>
+  );
 };
 
 interface CoreManagerViewProps {
@@ -297,6 +614,9 @@ export const CoreManagerView: React.FC<CoreManagerViewProps> = ({ onOpenAssistan
             </div>
           </div>
         </div>
+
+        {/* ——— V2 : Centre de mises à jour (logiciel + outils, données réelles) ——— */}
+        <UpdatesCenter onRefreshCore={refresh} />
 
         {loading ? (
           <div className="flex items-center gap-2 text-[#8c909f] text-sm py-8">

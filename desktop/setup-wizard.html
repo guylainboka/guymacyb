@@ -772,6 +772,37 @@
 </div>
 </main>
 
+<!-- Avertissement UNIQUE avant l'élévation UAC (règle V2 : une seule action,
+     un seul accord — pas d'écrans successifs). -->
+<div id="wsl-warning-overlay" style="display:none; position:fixed; inset:0; z-index:100; background:rgba(0,0,0,.7); align-items:center; justify-content:center; padding:16px;">
+  <div role="dialog" aria-modal="true" aria-label="Avertissement avant installation" style="width:100%; max-width:520px; background:var(--surface-container-low, #1c1b1d); border:1px solid rgba(251,191,36,.4); border-radius:12px; padding:24px;">
+    <div style="display:flex; align-items:center; gap:8px; margin-bottom:12px;">
+      <span class="material-symbols-outlined" style="color:var(--amber); font-size:22px;">warning</span>
+      <h3 style="margin:0; font-size:14px; font-weight:600; color:var(--on-surface, #e5e1e4);">Avertissement — action unique</h3>
+    </div>
+    <p style="margin:0 0 8px; font-size:14px; line-height:1.55; color:var(--on-surface-variant, #c3c6d7);">
+      Le logiciel va <strong style="color:var(--on-surface, #e5e1e4);">tout installer d'un bloc</strong> :
+      activer WSL2, télécharger et enregistrer la distribution
+      <strong style="color:var(--on-surface, #e5e1e4);">Ubuntu</strong> dans votre système Windows.
+    </p>
+    <ul style="margin:8px 0 0; padding-left:18px; font-size:12px; line-height:1.7; color:var(--on-surface-variant, #c3c6d7); font-family:'Courier Prime', monospace;">
+      <li>Une invite <strong style="color:var(--amber);">UAC</strong> (élévation administrateur) peut apparaître — acceptez-la.</li>
+      <li>Téléchargement de 5 à 15 minutes selon la connexion.</li>
+      <li>Un redémarrage de Windows peut être demandé par le système.</li>
+    </ul>
+    <p style="margin:12px 0 0; font-size:12px; color:var(--outline, #8d90a0);">
+      Un seul écran de confirmation : après validation, tout s'exécute automatiquement et le journal
+      en direct s'affiche dans la console de diagnostic.
+    </p>
+    <div style="display:flex; justify-content:flex-end; gap:8px; margin-top:16px;">
+      <button class="btn btn-ghost" id="btn-wsl-cancel" type="button">Annuler</button>
+      <button class="btn btn-tint" id="btn-wsl-confirm" type="button">
+        <span class="material-symbols-outlined">bolt</span>Confirmer et installer
+      </button>
+    </div>
+  </div>
+</div>
+
 <script>
 /* ============================================================================
    GUyma Cyb — Desktop Installer V2 (design maquettes, données 100% réelles)
@@ -912,10 +943,24 @@
     call('skipWizard');
   });
 
-  /* ——— Installation WSL + distro en un clic (élévation UAC, réel) ——— */
+  /* ——— Installation WSL + distro en un clic (élévation UAC, réel) ———
+     Avertissement UNIQUE d'abord (règle V2) : un seul écran d'accord, puis
+     exécution directe et complète. */
   var btnInstallWsl = document.getElementById('btn-install-wsl');
+  var wslOverlay = document.getElementById('wsl-warning-overlay');
+  var showWslWarning = function (show) {
+    wslOverlay.style.display = show ? 'flex' : 'none';
+  };
   btnInstallWsl.addEventListener('click', function () {
     if (state.installing) return;
+    showWslWarning(true);
+  });
+  document.getElementById('btn-wsl-cancel').addEventListener('click', function () {
+    showWslWarning(false);
+  });
+  document.getElementById('btn-wsl-confirm').addEventListener('click', function () {
+    if (state.installing) return;
+    showWslWarning(false);
     state.installing = true;
     btnInstallWsl.disabled = true;
     log('INFO', 'Installation de WSL2 + distribution Ubuntu (élévation UAC requise, 5 à 15 min selon la connexion)…');

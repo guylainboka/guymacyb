@@ -1,4 +1,5 @@
 import React, { useEffect, useRef, useState, useCallback } from 'react';
+import { ConfirmActionModal } from '../common/ConfirmActionModal';
 
 /* ============================================================================
  * OnboardingView — Desktop Installer V2 (design maquettes, mode in-app)
@@ -127,6 +128,9 @@ export const OnboardingView: React.FC<OnboardingViewProps> = ({ onFinish, reopen
   const [encryptLogs, setEncryptLogs] = useState(true);
   const [wslConfigPath, setWslConfigPath] = useState<string | null>(null);
   const [busy, setBusy] = useState<'' | 'wsl' | 'tools' | 'db' | 'finish'>('');
+  // Avertissement UNIQUE avant l'installation WSL/UAC (règle V2 : une action,
+  // un accord — pas d'écrans successifs).
+  const [confirmWsl, setConfirmWsl] = useState(false);
   const [dbBadge, setDbBadge] = useState<'none' | 'ok' | 'pending'>('none');
   const logBoxRef = useRef<HTMLDivElement | null>(null);
   const mountedRef = useRef(true);
@@ -268,6 +272,7 @@ export const OnboardingView: React.FC<OnboardingViewProps> = ({ onFinish, reopen
 
   const installWsl = async () => {
     if (busy) return;
+    setConfirmWsl(false);
     setBusy('wsl');
     log('INFO', 'Installation de WSL2 + distribution Ubuntu (élévation UAC requise, 5 à 15 min selon la connexion)…');
     try {
@@ -282,6 +287,9 @@ export const OnboardingView: React.FC<OnboardingViewProps> = ({ onFinish, reopen
       setBusy('');
     }
   };
+
+  // Avertissement UNIQUE avant l'élévation UAC (règle V2 : une seule action,
+  // un seul accord — pas d'écrans successifs).
 
   /* ——— Étape 3 : initialisation réelle de la base ——— */
   const initDb = async () => {
@@ -714,7 +722,7 @@ export const OnboardingView: React.FC<OnboardingViewProps> = ({ onFinish, reopen
                       </div>
                       {!wslOk && (
                         <div style={{ marginBottom: 16 }}>
-                          <Btn variant="amber" disabled={busy !== ''} onClick={installWsl}>
+                          <Btn variant="amber" disabled={busy !== ''} onClick={() => setConfirmWsl(true)}>
                             <Icon name="download" size={16} />{busy === 'wsl' ? 'Installation en cours…' : 'Installer WSL2 + Ubuntu (un clic, élévation UAC)'}
                           </Btn>
                           {distroJob?.running && distroJob.log.length > 0 && (
@@ -985,6 +993,32 @@ export const OnboardingView: React.FC<OnboardingViewProps> = ({ onFinish, reopen
           .ob-nav button { white-space: nowrap; width: auto !important; flex: none; }
         }
       `}</style>
+
+      {/* Avertissement UNIQUE avant l'élévation UAC — un seul accord, puis
+          l'installation s'exécute d'un bloc (règle V2 : pas de choix successifs). */}
+      <ConfirmActionModal
+        open={confirmWsl}
+        title="Avertissement — action unique"
+        busy={busy === 'wsl'}
+        confirmLabel="Confirmer et installer"
+        onConfirm={installWsl}
+        onCancel={() => setConfirmWsl(false)}
+      >
+        <div style={{ color: T.onSurfaceVariant, fontSize: 14, lineHeight: 1.55 }}>
+          Le logiciel va <strong style={{ color: T.onSurface }}>tout installer d'un bloc</strong> :
+          activer WSL2, télécharger et enregistrer la distribution <strong style={{ color: T.onSurface }}>Ubuntu</strong>
+          {' '}dans votre système Windows.
+        </div>
+        <ul style={{ marginTop: 8, paddingLeft: 18, fontSize: 12, lineHeight: 1.7, color: T.onSurfaceVariant, fontFamily: "'Courier Prime', monospace" }}>
+          <li>Une invite <strong style={{ color: T.amber }}>UAC</strong> (élévation administrateur) peut apparaître — acceptez-la.</li>
+          <li>Téléchargement de 5 à 15 minutes selon la connexion.</li>
+          <li>Un redémarrage de Windows peut être demandé par le système.</li>
+        </ul>
+        <div style={{ marginTop: 12, fontSize: 12, color: T.outline }}>
+          Un seul écran de confirmation : après validation, tout s'exécute automatiquement et le
+          journal en direct s'affiche dans la console de diagnostic.
+        </div>
+      </ConfirmActionModal>
     </div>
   );
 };

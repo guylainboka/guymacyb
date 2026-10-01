@@ -37,6 +37,7 @@ import { getPackagingInfo } from './src/server/packaging';
 import * as ws from './src/server/windowsSystem';
 import { invalidateWslCache, startDistroInstall, getDistroInstallStatus } from './src/server/wsl';
 import * as tb from './src/server/toolbridge';
+import * as updates from './src/server/updates';
 
 // PORT/HOST configurables : Electron (electron-main.cjs) injecte PORT=3000 et
 // HOST=127.0.0.1. En dev on écoute par défaut sur le loopback UNIQUEMENT — un
@@ -1063,6 +1064,39 @@ async function startServer() {
       invalidateWslCache();
       // Vérification réelle post-install + registre local (dossier tools-registry)
       const verification = await tb.verifyInstalledTools();
+      res.json({ ...result, verification });
+    } catch (err: any) {
+      res.status(500).json({ error: err.message });
+    }
+  });
+
+  // ============================================================
+  //  Centre de mises à jour (V2) — détection RÉELLE, zéro simulation
+  // ============================================================
+  //  GET : version du logiciel vs dernière release GitHub (API publique) +
+  //  paquets apt périmés/manquants (apt-get update + apt-cache policy réels).
+  //  Les deux sources peuvent renvoyer une ERREUR honnête (hors-ligne, pas de
+  //  distro, rate-limit) — jamais d'état inventé.
+  app.get('/api/updates/check', async (_req, res) => {
+    try {
+      const [app, tools] = await Promise.all([updates.getAppUpdateInfo(), updates.getToolsUpdateInfo()]);
+      res.json({ app, tools });
+    } catch (err: any) {
+      res.status(500).json({ error: err.message });
+    }
+  });
+
+  //  POST : UNE SEULE action — met à jour les paquets périmés ET installe les
+  //  manquants en une seule commande apt (l'UI affiche UN avertissement et
+  //  l'utilisateur confirme UNE fois). Re-vérification réelle post-application.
+  app.post('/api/updates/apply-tools', async (_req, res) => {
+    try {
+      const result = await updates.applyToolUpdates();
+      updates.invalidateUpdateCaches();
+      let verification: Awaited<ReturnType<typeof tb.verifyInstalledTools>> | null = null;
+      try {
+        verification = await tb.verifyInstalledTools();
+      } catch { /* vérification indisponible : non bloquant */ }
       res.json({ ...result, verification });
     } catch (err: any) {
       res.status(500).json({ error: err.message });

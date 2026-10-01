@@ -1,5 +1,6 @@
 import React, { useEffect, useState, useCallback } from 'react';
 import { ModuleView } from '../../types';
+import { ConfirmActionModal } from '../common/ConfirmActionModal';
 
 // ACCUEIL — remplace l'ancien dashboard. Doctrine :
 //  - AUCUNE donnée inventée : tout vient de /api/system/status (droits admin +
@@ -86,7 +87,8 @@ export const HomeView: React.FC<HomeViewProps> = ({ onSelectView }) => {
   const [sys, setSys] = useState<SystemStatus | null>(null);
   const [core, setCore] = useState<CoreStatus | null>(null);
   const [loading, setLoading] = useState<boolean>(true);
-  const [busy, setBusy] = useState<'' | 'install' | 'refresh' | 'distro'>('');
+  const [busy, setBusy] = useState<'' | 'refresh' | 'distro' | 'maintain'>('');
+  const [confirmMaintain, setConfirmMaintain] = useState<boolean>(false);
   const [actionOutput, setActionOutput] = useState<string>('');
   const [actionError, setActionError] = useState<string>('');
   const [distroJob, setDistroJob] = useState<DistroJob | null>(null);
@@ -141,29 +143,57 @@ export const HomeView: React.FC<HomeViewProps> = ({ onSelectView }) => {
     }
   };
 
-  const installTools = async () => {
-    setBusy('install');
+  // ——— V2 : UNE SEULE action de maintenance (demande de l'opérateur) ———
+  // Pas de choix successifs : UN avertissement (modal), puis l'exécution
+  // complète d'un bloc — Ubuntu (si absent) → outils manquants + mises à jour
+  // (une seule commande apt). Toutes les données sont réelles.
+  const maintain = async () => {
+    setConfirmMaintain(false);
+    setBusy('maintain');
     setActionError('');
-    setActionOutput('Installation apt en cours dans le distro WSL (peut prendre plusieurs minutes)…');
     try {
-      const r = await fetch('/api/core/install-tools', { method: 'POST' });
-      const data = await r.json();
-      if (data?.verification) {
-        const v = data.verification;
-        setActionOutput(
-          `Installation terminée (exit ${data.exitCode}). Outils vérifiés : ${v.verified.length} — absents : ${v.absent.length ? v.absent.join(', ') : 'aucun'}` +
-            `\nRegistre : ${v.registryDir}`
-        );
-      } else if (data?.output) {
-        setActionOutput(String(data.output).slice(-2000));
+      // Phase A (réelle, SEULEMENT si nécessaire) : distribution Ubuntu absente.
+      if (noDistro) {
+        setActionOutput('Étape 1/2 — téléchargement et enregistrement d\'Ubuntu (5 à 15 min selon la connexion)…');
+        const r = await fetch('/api/core/install-distro', { method: 'POST' });
+        const d = await r.json();
+        if (!r.ok) {
+          setActionError(d?.error || 'Démarrage de l\'installation d\'Ubuntu impossible');
+          return;
+        }
+        for (;;) {
+          await new Promise((s) => setTimeout(s, 2500));
+          const st = await pollDistroStatus();
+          if (!mountedRef.current) return;
+          if (st?.done) {
+            if (st.error) {
+              setActionError(`Installation d\'Ubuntu échouée : ${st.error}`);
+              return;
+            }
+            break;
+          }
+        }
+        setActionOutput('Ubuntu enregistrée. Étape 2/2 — outils manquants + mises à jour (apt)…');
+      }
+      // Phase B : UNE commande apt = outils manquants installés + paquets
+      // périmés mis à jour (la liste exacte est déterminée réellement côté
+      // serveur via apt-cache policy — aucune invention).
+      const r2 = await fetch('/api/updates/apply-tools', { method: 'POST' });
+      const d2 = await r2.json();
+      if (!r2.ok) {
+        setActionError(d2?.error || `Échec HTTP ${r2.status}`);
       } else {
-        setActionError(data?.error || 'Réponse inattendue du serveur');
+        const v = d2.verification;
+        setActionOutput(
+          (d2.output ? String(d2.output).slice(-2000) : '(aucune sortie)') +
+          (v ? `\n\nVérification réelle : ${v.verified.length} outil(s) vérifié(s)${v.absent.length ? ` — absents : ${v.absent.join(', ')}` : ''}` : '')
+        );
       }
       await load();
     } catch (e: any) {
-      setActionError(e?.message || 'API injoignable');
+      if (mountedRef.current) setActionError(e?.message || 'API injoignable');
     } finally {
-      setBusy('');
+      if (mountedRef.current) setBusy('');
     }
   };
 
@@ -184,35 +214,6 @@ export const HomeView: React.FC<HomeViewProps> = ({ onSelectView }) => {
       return data as DistroJob;
     } catch {
       return null;
-    }
-  };
-
-  const installDistro = async () => {
-    setBusy('distro');
-    setActionError('');
-    setActionOutput('');
-    try {
-      const r = await fetch('/api/core/install-distro', { method: 'POST' });
-      const data = await r.json();
-      if (!r.ok) {
-        setActionError(data?.error || 'Démarrage de l\'installation impossible');
-        setBusy('');
-        return;
-      }
-      // Polling du journal jusqu'à la fin du job (téléchargement + enregistrement).
-      // Le boucle continue même si le composant est démonté/remonté : le job
-      // vit côté serveur ; au remontage, useEffect relance le polling si besoin.
-      for (;;) {
-        await new Promise((s) => setTimeout(s, 2500));
-        const st = await pollDistroStatus();
-        if (!mountedRef.current) return;
-        if (st?.done) break;
-      }
-      await load();
-    } catch (e: any) {
-      if (mountedRef.current) setActionError(e?.message || 'API injoignable');
-    } finally {
-      if (mountedRef.current) setBusy('');
     }
   };
 
@@ -290,7 +291,7 @@ export const HomeView: React.FC<HomeViewProps> = ({ onSelectView }) => {
           </div>
         </div>
 
-        {/* ——— V2 : ACTIONS RAPIDES visibles en héros ——— */}
+        {/* ——— V2 : ACTIONS — UNE seule action directe + assistant + refresh ——— */}
         <div className="mt-4 border-t border-[#232838] pt-4">
           <div className="mb-2 text-[10px] font-semibold uppercase tracking-widest text-[#8c909f]">
             Actions rapides
@@ -303,18 +304,25 @@ export const HomeView: React.FC<HomeViewProps> = ({ onSelectView }) => {
               <span className="material-symbols-outlined text-base">waving_hand</span>
               Assistant d'installation V2
             </button>
+            {/* UNE seule action de maintenance : UN avertissement, puis tout s'exécute */}
             <button
-              onClick={installTools}
-              disabled={busy !== '' || (core?.isWindows && !wslOk)}
+              onClick={() => setConfirmMaintain(true)}
+              disabled={busy !== '' || Boolean(core?.isWindows && !wslOk && !noDistro)}
               title={
-                core?.isWindows && !wslOk
-                  ? 'Nécessite une distribution WSL opérationnelle — relancez l\'assistant d\'installation'
-                  : 'Installe les outils Linux manquants (nmap, nikto, aircrack-ng…) dans le distro WSL'
+                core?.isWindows && !wslOk && !noDistro
+                  ? 'WSL lui-même est absent — utilisez l\'assistant d\'installation (élévation UAC requise)'
+                  : 'UNE seule action : installe Ubuntu si absent, puis les outils manquants et les mises à jour — après UN avertissement'
               }
-              className="flex min-h-[44px] items-center gap-2 rounded-lg border border-[#2c3245] bg-[#1a1f2b] px-4 py-2 text-sm font-medium text-white transition hover:border-[#4cd7f6]/50 hover:bg-[#1e2433] disabled:cursor-not-allowed disabled:opacity-50"
+              className="flex min-h-[44px] items-center gap-2 rounded-lg border border-amber-400/40 bg-amber-500/15 px-4 py-2 text-sm font-semibold text-amber-100 transition hover:bg-amber-500/25 disabled:cursor-not-allowed disabled:opacity-50"
             >
-              <span className="material-symbols-outlined text-base">download</span>
-              {busy === 'install' ? 'Installation…' : `Installer les outils Linux (${toolsTotal - toolsAvail} manquants)`}
+              <span className={`material-symbols-outlined text-base ${busy === 'maintain' ? 'animate-spin' : ''}`}>
+                {busy === 'maintain' ? 'progress_activity' : 'download_for_offline'}
+              </span>
+              {busy === 'maintain'
+                ? 'Exécution en cours…'
+                : noDistro
+                  ? 'Tout installer maintenant (Ubuntu + outils)'
+                  : `Tout installer / mettre à jour (${toolsTotal - toolsAvail} manquant(s))`}
             </button>
             <button
               onClick={refreshWsl}
@@ -327,7 +335,10 @@ export const HomeView: React.FC<HomeViewProps> = ({ onSelectView }) => {
           </div>
         </div>
 
-        {/* WSL installé mais AUCUN distro : panneau de correction en un clic */}
+        {/* WSL installé mais AUCUN distro : information + journal (l'action
+            unique « Tout installer » ci-dessus est le SEUL déclencheur — pas de
+            second bouton concurrent, conformément à la règle « une seule
+            action, un avertissement ») */}
         {noDistro && (
           <div className="mt-4 rounded-lg border border-amber-500/30 bg-amber-500/10 p-4">
             <div className="flex items-start gap-3">
@@ -336,17 +347,10 @@ export const HomeView: React.FC<HomeViewProps> = ({ onSelectView }) => {
                 <strong>WSL est installé mais aucune distribution Linux n'est enregistrée.</strong>
                 <div className="mt-1 text-xs text-amber-300/80">
                   C'est pour cela que les outils ne peuvent pas s'installer et que les terminaux restent inactifs.
-                  Cliquez ci-dessous : le logiciel télécharge et enregistre Ubuntu tout seul (5 à 15 min selon la
-                  connexion), sans aucune commande à taper. Si Windows demande une confirmation (UAC), acceptez-la.
+                  Utilisez le bouton « Tout installer maintenant (Ubuntu + outils) » ci-dessus : le logiciel
+                  télécharge et enregistre Ubuntu tout seul (5 à 15 min selon la connexion), sans aucune commande
+                  à taper. Si Windows demande une confirmation (UAC), acceptez-la.
                 </div>
-                <button
-                  onClick={installDistro}
-                  disabled={busy !== ''}
-                  className="mt-3 flex min-h-[44px] items-center gap-2 rounded-lg border border-amber-400/40 bg-amber-500/20 px-4 py-2 text-sm font-semibold text-amber-100 transition hover:bg-amber-500/30 disabled:opacity-50"
-                >
-                  <span className="material-symbols-outlined text-base">download</span>
-                  {busy === 'distro' ? 'Installation d\'Ubuntu en cours…' : 'Installer Ubuntu maintenant (un clic)'}
-                </button>
               </div>
             </div>
             {distroJob && (distroJob.log.length > 0 || distroJob.running) && (
@@ -391,38 +395,28 @@ export const HomeView: React.FC<HomeViewProps> = ({ onSelectView }) => {
         )}
       </section>
 
-      {/* ——— ACTIONS DE MAINTENANCE ——— */}
+      {/* ——— JOURNAL D'ACTIVITÉ (sorties réelles) ——— */}
       <section className="rounded-xl border border-[#232838] bg-[#12151c] p-5">
-        <h2 className="mb-3 flex items-center gap-2 text-sm font-semibold uppercase tracking-wide text-[#8c909f]">
-          <span className="material-symbols-outlined text-base">build</span> Configuration système
-        </h2>
-        <div className="flex flex-wrap gap-3">
+        <div className="mb-3 flex flex-wrap items-center justify-between gap-2">
+          <h2 className="flex items-center gap-2 text-sm font-semibold uppercase tracking-wide text-[#8c909f]">
+            <span className="material-symbols-outlined text-base">receipt_long</span> Journal d'activité
+          </h2>
           <button
-            onClick={refreshWsl}
-            disabled={busy !== ''}
-            className="flex min-h-[44px] items-center gap-2 rounded-lg border border-[#2c3245] bg-[#1a1f2b] px-4 py-2 text-sm font-medium text-white transition hover:border-[#4cd7f6]/50 hover:bg-[#1e2433] disabled:opacity-50"
+            onClick={() => onSelectView('core-manager')}
+            className="flex min-h-[36px] items-center gap-2 rounded-lg border border-[#2c3245] bg-[#1a1f2b] px-3 py-1.5 text-xs font-medium text-white transition hover:border-[#4cd7f6]/50 hover:bg-[#1e2433]"
           >
-            <span className="material-symbols-outlined text-base">refresh</span>
-            {busy === 'refresh' ? 'Détection…' : 'Re-détecter WSL'}
-          </button>
-          <button
-            onClick={installTools}
-            disabled={busy !== '' || (core?.isWindows && !wslOk)}
-            className="flex min-h-[44px] items-center gap-2 rounded-lg border border-[#2c3245] bg-[#1a1f2b] px-4 py-2 text-sm font-medium text-white transition hover:border-[#4cd7f6]/50 hover:bg-[#1e2433] disabled:cursor-not-allowed disabled:opacity-50"
-            title={
-              core?.isWindows && !wslOk
-                ? 'Nécessite une distribution WSL opérationnelle — installez d\'abord Ubuntu (bouton dédié ci-dessus)'
-                : 'Installe nmap, nikto, aircrack-ng, hashcat… dans le distro WSL détecté, puis vérifie chaque outil et consigne le résultat dans tools-registry'
-            }
-          >
-            <span className="material-symbols-outlined text-base">download</span>
-            {busy === 'install' ? 'Installation…' : `Installer les outils Linux (${toolsTotal - toolsAvail} manquants)`}
+            <span className="material-symbols-outlined text-sm">system_update_alt</span>
+            Centre de mises à jour (Core Manager)
           </button>
         </div>
-        {(actionOutput || actionError) && (
-          <pre className="mt-3 max-h-48 overflow-y-auto whitespace-pre-wrap rounded-lg border border-[#232838] bg-[#0a0d13] p-3 text-xs text-[#c2c6d6] scrollbar-thin">
+        {(actionOutput || actionError) ? (
+          <pre className="max-h-48 overflow-y-auto whitespace-pre-wrap rounded-lg border border-[#232838] bg-[#0a0d13] p-3 text-xs text-[#c2c6d6] scrollbar-thin">
 {actionError ? `✗ ${actionError}` : actionOutput}
           </pre>
+        ) : (
+          <p className="text-xs text-[#8c909f]">
+            Aucune action exécutée pour le moment. La sortie réelle d'apt et des installations s'affichera ici.
+          </p>
         )}
       </section>
 
@@ -461,13 +455,37 @@ export const HomeView: React.FC<HomeViewProps> = ({ onSelectView }) => {
           })}
         </div>
       </section>
+      {/* ——— AVERTISSEMENT UNIQUE avant l'action de maintenance ——— */}
+      <ConfirmActionModal
+        open={confirmMaintain}
+        title="Avertissement — action unique"
+        busy={busy === 'maintain'}
+        confirmLabel="Confirmer et exécuter"
+        onConfirm={maintain}
+        onCancel={() => setConfirmMaintain(false)}
+      >
+        <p className="text-sm leading-relaxed text-[#c2c6d6]">
+          {noDistro ? (
+            <>Le logiciel va <strong className="text-white">tout faire d'un bloc</strong> : 1) télécharger et
+            enregistrer la distribution <strong className="text-white">Ubuntu</strong> (5 à 15 min selon la
+            connexion — une invite UAC peut apparaître) ; 2) installer les outils manquants et appliquer les
+            mises à jour.</>
+          ) : (
+            <>Le logiciel va, <strong className="text-white">en une seule opération</strong>, installer les
+            outils Linux manquants et appliquer les mises à jour disponibles des paquets (nmap, nikto,
+            hashcat…) via <code className="font-mono text-[#4cd7f6]">apt-get</code> dans la distribution{' '}
+            <strong className="text-white">{core?.wsl?.defaultDistro ?? 'WSL'}</strong>.</>
+          )}
+        </p>
+        <p className="mt-3 text-xs text-[#8c909f]">
+          La liste exacte des paquets est déterminée réellement à l'exécution (apt-cache). La sortie
+          réelle d'apt sera affichée dans le journal. Aucune donnée n'est détruite : il s'agit
+          d'installation et de mise à jour de paquets.
+        </p>
+      </ConfirmActionModal>
     </div>
   );
 };
-
-// ---------------------------------------------------------------------------
-//  Petits composants locaux
-// ---------------------------------------------------------------------------
 
 const StatusPill: React.FC<{ icon: string; label: string; value: string; ok: boolean; title?: string }> = ({
   icon,
